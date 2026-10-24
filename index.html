@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aero Pair Lab — Correlation for Aerodrome LPs</title>
+<meta name="description" content="Correlation matrix, ratio volatility and impermanent-loss stats for Coinbase tokenized stocks and crypto on Aerodrome (Base).">
+<link rel="preconnect" href="https://api.fontshare.com">
+<link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&f[]=jet-brains-mono@400,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" width="24" height="24" aria-label="Aero Pair Lab" role="img"><rect x="2" y="2" width="9" height="9" rx="1.5" fill="currentColor"/><rect x="13" y="2" width="9" height="9" rx="1.5" fill="currentColor" opacity=".45"/><rect x="2" y="13" width="9" height="9" rx="1.5" fill="currentColor" opacity=".45"/><rect x="13" y="13" width="9" height="9" rx="1.5" fill="currentColor"/></svg>
+    <div>
+      <h1>Aero Pair Lab</h1>
+      <p class="sub">Correlation &amp; IL risk for Aerodrome pairs — stock tokens + crypto</p>
+    </div>
+  </div>
+  <div class="asof" id="asof">Loading data…</div>
+</header>
+
+<main>
+  <section class="controls card" aria-label="Controls">
+    <div class="ctl-row">
+      <div class="ctl">
+        <label class="lbl">Tokens <span id="selCount" class="muted"></span></label>
+        <div class="picker" id="picker">
+          <div class="chips" id="chips"></div>
+          <button class="btn ghost" id="addBtn" aria-haspopup="listbox">+ Add token</button>
+          <div class="pop" id="pop" hidden>
+            <input id="search" type="search" placeholder="Search NVDAc, ETH, AERO…" autocomplete="off">
+            <div class="pop-list" id="popList" role="listbox"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="ctl-row wrap">
+      <div class="ctl">
+        <span class="lbl">Presets</span>
+        <div class="seg" id="presets"></div>
+      </div>
+      <div class="ctl">
+        <span class="lbl">Period</span>
+        <div class="seg" id="periods"></div>
+      </div>
+      <div class="ctl">
+        <span class="lbl">Matrix shows</span>
+        <div class="seg" id="metrics"></div>
+      </div>
+      <div class="ctl">
+        <label class="lbl" for="range">LP range ±<span id="rangeVal">10</span>%</label>
+        <input type="range" id="range" min="1" max="50" value="10">
+      </div>
+    </div>
+  </section>
+
+  <section class="grid2">
+    <div class="card matrix-card">
+      <div class="card-h">
+        <h2 id="matrixTitle">Correlation matrix</h2>
+        <div class="legend" id="legend"></div>
+      </div>
+      <div class="matrix-wrap" id="matrixWrap"><div id="matrix" class="matrix"></div></div>
+      <p class="hint">Tap any cell to open the pair.</p>
+    </div>
+
+    <div class="card detail" id="detail">
+      <div class="card-h">
+        <h2 id="pairTitle">Pair detail</h2>
+        <div class="pair-sel">
+          <select id="selA" aria-label="Token A"></select>
+          <span class="muted">/</span>
+          <select id="selB" aria-label="Token B"></select>
+        </div>
+      </div>
+      <div class="kpis" id="kpis"></div>
+      <div class="chart-box"><canvas id="perfChart" aria-label="Normalized price chart"></canvas></div>
+      <div class="chart-box"><canvas id="ratioChart" aria-label="Price ratio chart with LP range"></canvas></div>
+      <div id="poolList" class="pools"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-h">
+      <h2>Best pairs to LP</h2>
+      <div class="filters">
+        <label class="chk"><input type="checkbox" id="fPool" checked> Has Aerodrome pool</label>
+        <label class="chk"><input type="checkbox" id="fSel"> Only selected tokens</label>
+        <label class="chk"><input type="checkbox" id="fUsd" checked> Include USDC pairs</label>
+        <input type="search" id="fText" placeholder="Filter pairs…" aria-label="Filter pairs">
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table id="rank">
+        <thead><tr>
+          <th data-k="pair">Pair</th>
+          <th data-k="ratioVol" class="num">Ratio vol <span class="muted">ann.</span></th>
+          <th data-k="corr" class="num">Corr</th>
+          <th data-k="beta" class="num">Beta</th>
+          <th data-k="il" class="num">IL <span class="muted">full range</span></th>
+          <th data-k="inRange" class="num">In range</th>
+          <th data-k="liq" class="num">Pool TVL</th>
+          <th data-k="vol" class="num">24h vol</th>
+          <th data-k="turn" class="num">Vol/TVL</th>
+          <th>Pool</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="hint" id="rankNote"></p>
+  </section>
+
+  <section class="card method">
+    <h2>How to read this</h2>
+    <ul>
+      <li><b>Ratio vol</b> is the annualized volatility of price A ÷ price B — the number that actually drives impermanent loss and how often a concentrated (Slipstream) range goes out of range. Lower is safer. Correlation alone can mislead: two assets with 0.9 correlation but very different volatility (e.g. MSTRc vs BTC) still drift apart.</li>
+      <li><b>Correlation</b> uses log returns over the period (hourly bars for 7D–90D, daily for 180D–1Y). <b>Beta</b> is how much A moves per 1% move in B.</li>
+      <li><b>IL full range</b> is the realized impermanent loss of a v2-style (full-range) position opened at the start of the period vs simply holding, before fees and emissions. Concentrated ranges amplify it.</li>
+      <li><b>In range</b> is the share of the period the A/B price stayed within ±your range of the starting price.</li>
+      <li><b>Vol/TVL</b> is 24h volume ÷ pool liquidity — a rough proxy for fee yield. Emissions (AERO rewards) are not included.</li>
+      <li>Stock tokens use the underlying share price (the Coinbase tokens are 1:1 backed, with a small dividend multiplier), so correlation history predates each token's Aerodrome launch. US markets are closed nights and weekends — the stock side is flat then, while crypto keeps moving.</li>
+    </ul>
+    <p class="muted small">Prices: Yahoo Finance (stocks), Coinbase Exchange (crypto). Pools: DEX Screener (Aerodrome only). Token list: Coinbase Tokenized Stocks API. Not financial advice.</p>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
