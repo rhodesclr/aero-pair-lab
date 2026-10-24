@@ -1,0 +1,15 @@
+{
+  "name": "Aero Pair Lab",
+  "short_name": "Pair Lab",
+  "description": "Correlation & IL risk for Aerodrome pairs — stock tokens + crypto",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0a0e15",
+  "theme_color": "#0a0e15",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
