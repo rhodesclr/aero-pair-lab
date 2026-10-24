@@ -104,6 +104,9 @@
   // ---------- formatting ----------
   const pct = (x, d = 1) => { if (x == null || isNaN(x)) return '—'; let v = (x * 100).toFixed(d); if (/^-0\.?0*$/.test(v)) v = v.slice(1); return v + '%'; };
   const sgnPct = (x, d = 1) => (x == null ? '—' : (x > 0 ? '+' : '') + (x * 100).toFixed(d) + '%');
+  const aprFmt = (x) => (x == null ? '—' : x >= 10 ? Math.round(x * 100).toLocaleString() + '%' : x >= 0.1 ? (x * 100).toFixed(0) + '%' : (x * 100).toFixed(1) + '%');
+  const feeFmt = (f) => (f == null ? '' : +(f * 100).toFixed(4) + '% fee');
+  const kindFmt = (k) => (!k ? '' : k.startsWith('CL') ? 'Slipstream ' + k : k === 'stable' ? 'Basic stable' : 'Basic volatile');
   const f2 = (x) => (x == null ? '—' : x.toFixed(2));
   const usd = (x) => (x == null ? '—' : x >= 1e6 ? '$' + (x / 1e6).toFixed(2) + 'M' : x >= 1e3 ? '$' + (x / 1e3).toFixed(1) + 'K' : '$' + Math.round(x));
   const badge = (s) => {
@@ -290,7 +293,7 @@
     });
     const ps = poolsFor(a, b);
     $('#poolList').innerHTML = ps.length
-      ? `<div class="lbl">Aerodrome pools</div>` + ps.slice(0, 4).map((p) => `<div class="pool"><span><b>${p.a}/${p.b}</b> <span class="muted mono">TVL ${usd(p.liq)} · 24h vol ${usd(p.vol)}</span></span><a href="${p.url}" target="_blank" rel="noopener">View pool ↗</a></div>`).join('')
+      ? `<div class="lbl">Aerodrome pools</div>` + ps.slice(0, 4).map((p) => `<div class="pool"><span><b>${p.a}/${p.b}</b> <span class="muted mono">${kindFmt(p.kind)}${p.fee != null ? ' · ' + feeFmt(p.fee) : ''}</span><br><span class="muted mono">TVL ${usd(p.liq)} · 24h vol ${usd(p.vol)} · fee APR <span class="${p.apr >= 0.2 ? 'good' : ''}">${aprFmt(p.apr)}</span></span></span><a href="${p.url}" target="_blank" rel="noopener">View pool ↗</a></div>`).join('')
       : `<div class="nopool">No Aerodrome pool found for ${a}/${b}. You'd have to create it, or LP each side against USDC.</div>`;
   }
 
@@ -298,6 +301,7 @@
   function rankRows() {
     const onlyPool = $('#fPool').checked, onlySel = $('#fSel').checked, usdOk = $('#fUsd').checked;
     const q = $('#fText').value.trim().toLowerCase();
+    const minTvl = +$('#fTvl').value;
     const uni = onlySel ? st.sel : SYMS;
     const rows = [];
     for (let i = 0; i < uni.length; i++) for (let j = i + 1; j < uni.length; j++) {
@@ -313,7 +317,11 @@
       const r = pairStats(a, b);
       if (!r) continue;
       const liq = ps.reduce((s, p) => s + p.liq, 0), vol = ps.reduce((s, p) => s + p.vol, 0);
-      rows.push({ a, b, pair: a + '/' + b, ...r, liq: ps.length ? liq : null, vol: ps.length ? vol : null, turn: ps.length && liq > 0 ? vol / liq : null, url: ps[0]?.url });
+      if (minTvl && (!ps.length || liq < minTvl)) continue;
+      const feeUsd = ps.reduce((s, p) => s + (p.fee != null ? p.vol * p.fee : 0), 0);
+      const feeLiq = ps.reduce((s, p) => s + (p.fee != null ? p.liq : 0), 0);
+      const apr = feeLiq > 0 ? (feeUsd * 365) / feeLiq : null;
+      rows.push({ a, b, pair: a + '/' + b, ...r, liq: ps.length ? liq : null, vol: ps.length ? vol : null, turn: ps.length && liq > 0 ? vol / liq : null, apr, url: ps[0]?.url });
     }
     return rows;
   }
@@ -340,18 +348,19 @@
         <td class="num">${usd(r.liq)}</td>
         <td class="num">${usd(r.vol)}</td>
         <td class="num">${r.turn == null ? '—' : r.turn.toFixed(2) + '×'}</td>
+        <td class="num ${r.apr == null ? '' : r.apr >= 0.2 ? 'good' : r.apr < 0.02 ? 'muted' : ''}">${aprFmt(r.apr)}</td>
         <td>${r.url ? `<a href="${r.url}" target="_blank" rel="noopener">View ↗</a>` : '<span class="muted small">none</span>'}</td>
       </tr>`;
-    }).join('') || `<tr><td colspan="10" class="muted">No pairs match these filters.</td></tr>`;
+    }).join('') || `<tr><td colspan="11" class="muted">No pairs match these filters.</td></tr>`;
     document.querySelectorAll('#rank th[data-k]').forEach((th) => { th.classList.toggle('sorted', th.dataset.k === k); th.classList.toggle('desc', th.dataset.k === k && st.sortDesc); });
-    $('#rankNote').textContent = `${rows.length} pairs · ${st.period} · range ±${st.range}%${rows.length > 300 ? ' · showing first 300' : ''}. Sorted by lowest ratio vol = least IL. Tap a row for detail.`;
+    $('#rankNote').textContent = `${rows.length} pairs · ${st.period} · range ±${st.range}%${rows.length > 300 ? ' · showing first 300' : ''}. ${{ratioVol:'Sorted by lowest ratio vol = least IL',apr:'Sorted by fee APR'}[k] && !(k==='ratioVol'&&st.sortDesc) && !(k==='apr'&&!st.sortDesc) ? ' · '+{ratioVol:'Sorted by lowest ratio vol = least IL',apr:'Sorted by highest fee APR'}[k] : ''}. Tap a row for detail.`;
   }
   document.querySelectorAll('#rank th[data-k]').forEach((th) => th.onclick = () => {
     const k = th.dataset.k;
-    if (st.sortK === k) st.sortDesc = !st.sortDesc; else { st.sortK = k; st.sortDesc = ['corr', 'inRange', 'liq', 'vol', 'turn', 'il'].includes(k); }
+    if (st.sortK === k) st.sortDesc = !st.sortDesc; else { st.sortK = k; st.sortDesc = ['corr', 'inRange', 'liq', 'vol', 'turn', 'apr', 'il'].includes(k); }
     renderRank();
   });
-  ['#fPool', '#fSel', '#fUsd'].forEach((s) => $(s).onchange = renderRank);
+  ['#fPool', '#fSel', '#fUsd', '#fTvl'].forEach((s) => $(s).onchange = renderRank);
   $('#fText').oninput = renderRank;
   $('#rank tbody').onclick = (e) => {
     const tr = e.target.closest('tr'); if (!tr || !tr.dataset.a || e.target.closest('a')) return;

@@ -96,6 +96,7 @@
         <label class="chk"><input type="checkbox" id="fPool" checked> Has Aerodrome pool</label>
         <label class="chk"><input type="checkbox" id="fSel"> Only selected tokens</label>
         <label class="chk"><input type="checkbox" id="fUsd" checked> Include USDC pairs</label>
+        <label class="chk">Min TVL <select id="fTvl" aria-label="Minimum pool TVL"><option value="0">Any</option><option value="10000" selected>$10K+</option><option value="50000">$50K+</option><option value="250000">$250K+</option><option value="1000000">$1M+</option></select></label>
         <input type="search" id="fText" placeholder="Filter pairs…" aria-label="Filter pairs">
       </div>
     </div>
@@ -111,6 +112,7 @@
           <th data-k="liq" class="num">Pool TVL</th>
           <th data-k="vol" class="num">24h vol</th>
           <th data-k="turn" class="num">Vol/TVL</th>
+          <th data-k="apr" class="num" title="24h volume × pool fee × 365 ÷ TVL. Unstaked LPs only.">Fee APR</th>
           <th>Pool</th>
         </tr></thead>
         <tbody></tbody>
@@ -126,7 +128,8 @@
       <li><b>Correlation</b> uses log returns over the period (hourly bars for 7D–90D, daily for 180D–1Y). <b>Beta</b> is how much A moves per 1% move in B.</li>
       <li><b>IL full range</b> is the realized impermanent loss of a v2-style (full-range) position opened at the start of the period vs simply holding, before fees and emissions. Concentrated ranges amplify it.</li>
       <li><b>In range</b> is the share of the period the A/B price stayed within ±your range of the starting price.</li>
-      <li><b>Vol/TVL</b> is 24h volume ÷ pool liquidity — a rough proxy for fee yield. Emissions (AERO rewards) are not included.</li>
+      <li><b>Vol/TVL</b> is 24h volume ÷ pool liquidity.</li>
+      <li><b>Fee APR</b> = last 24h volume × the pool's swap fee (read on-chain) × 365 ÷ pool TVL, combined across all Aerodrome pools for the pair. It's a one-day snapshot, so it jumps around. On Aerodrome, trading fees go to <b>unstaked</b> LPs; if you stake in the gauge you give up fees and earn AERO emissions instead (not shown). For Slipstream (concentrated) pools this is the pool-wide average — a tight in-range position earns more, an out-of-range one earns nothing.</li>
       <li>Stock tokens use the underlying share price (the Coinbase tokens are 1:1 backed, with a small dividend multiplier), so correlation history predates each token's Aerodrome launch. US markets are closed nights and weekends — the stock side is flat then, while crypto keeps moving.</li>
     </ul>
     <p class="muted small">Prices: Yahoo Finance (stocks), Coinbase Exchange (crypto). Pools: DEX Screener (Aerodrome only). Token list: Coinbase Tokenized Stocks API. Not financial advice.</p>

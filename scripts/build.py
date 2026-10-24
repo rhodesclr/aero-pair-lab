@@ -66,6 +66,18 @@ for p in allp:
     a=norm(p['baseToken']['symbol']); b=norm(p['quoteToken']['symbol'])
     if not a or not b or a==b: continue
     pools[p['pairAddress']]=dict(a=a,b=b,liq=round((p.get('liquidity') or {}).get('usd',0) or 0),vol=round((p.get('volume') or {}).get('h24',0) or 0),url=p['url'],label=(p.get('labels') or [None])[0])
+# on-chain fee per pool -> fee APR = 24h volume x fee x 365 / TVL
+from pool_fees import pool_fee
+import concurrent.futures as _cf
+def _fee(item):
+    addr,p=item
+    try: kind,fee,ts=pool_fee(addr)
+    except Exception: kind,fee,ts=None,None,None
+    p['kind']=('CL'+str(ts)) if kind=='CL' and ts else kind
+    p['fee']=fee
+    p['apr']=round(p['vol']*fee*365/p['liq'],4) if fee is not None and p['liq']>0 else None
+with _cf.ThreadPoolExecutor(6) as _ex: list(_ex.map(_fee,pools.items()))
+print('fees', sum(p['fee'] is not None for p in pools.values()),'/',len(pools))
 def pack(series,step):
     keys=sorted({k for s in series.values() for k in s})
     return dict(start=keys[0],end=keys[-1],step=step,prices={s:[series[s].get(k) for k in range(keys[0],keys[-1]+1)] for s in series})
