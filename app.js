@@ -12,7 +12,7 @@
     (poolMap[k] = poolMap[k] || []).push(p);
   }
   for (const k in poolMap) poolMap[k].sort((x, y) => y.liq - x.liq);
-  const poolsFor = (a, b) => poolMap[[a, b].sort().join('|')] || [];
+  const poolsFor = (a, b) => (poolMap[[a, b].sort().join('|')] || []).filter((p) => st.legacy || p.venue !== 'legacy');
 
   // ---------- state ----------
   const PERIODS = [
@@ -43,6 +43,7 @@
     pair: ['NVDAc', 'GOOGLc'],
     sortK: 'ratioVol',
     sortDesc: false,
+    legacy: false,
   };
 
   // ---------- math ----------
@@ -168,7 +169,7 @@
   const pop = $('#pop');
   function renderPop() {
     const q = $('#search').value.trim().toLowerCase();
-    const groups = { stock: 'Stock tokens (Coinbase, on Aerodrome)', crypto: 'Crypto on Base', stable: 'Stablecoins' };
+    const groups = { stock: 'Stock tokens (Coinbase)', crypto: 'Crypto on Base', stable: 'Stablecoins' };
     let html = '';
     for (const g of ['stock', 'crypto', 'stable']) {
       const items = D.assets.filter((a) => a.type === g && (!q || a.sym.toLowerCase().includes(q) || a.name.toLowerCase().includes(q)));
@@ -211,7 +212,7 @@
         const sel = (st.pair[0] === a && st.pair[1] === b) || (st.pair[0] === b && st.pair[1] === a);
         const hp = poolsFor(a, b).length > 0;
         const style = c ? `background:${rgb(c)};color:${textOn(c)}` : '';
-        const tip = `${a}/${b}: corr ${r ? f2(r.corr) : '—'}, ratio vol ${r ? pct(r.ratioVol, 0) : '—'}${hp ? ' · Aerodrome pool' : ''}`;
+        const tip = `${a}/${b}: corr ${r ? f2(r.corr) : '—'}, ratio vol ${r ? pct(r.ratioVol, 0) : '—'}${hp ? ' · Aero pool' : ''}`;
         h += `<div class="mcell ${c ? '' : 'na'} ${sel ? 'sel' : ''}" style="${style};position:relative" data-a="${a}" data-b="${b}" title="${tip}">${cellText(m, v)}${hp ? '<span style="position:absolute;top:3px;right:4px;width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.75"></span>' : ''}</div>`;
       }
     }
@@ -293,8 +294,8 @@
     });
     const ps = poolsFor(a, b);
     $('#poolList').innerHTML = ps.length
-      ? `<div class="lbl">Aerodrome pools</div>` + ps.slice(0, 4).map((p) => `<div class="pool"><span><b>${p.a}/${p.b}</b> <span class="muted mono">${kindFmt(p.kind)}${p.fee != null ? ' · ' + feeFmt(p.fee) : ''}</span><br><span class="muted mono">TVL ${usd(p.liq)} · 24h vol ${usd(p.vol)} · fee APR <span class="${p.apr >= 0.2 ? 'good' : ''}">${aprFmt(p.apr)}</span></span></span><a href="${p.url}" target="_blank" rel="noopener">View pool ↗</a></div>`).join('')
-      : `<div class="nopool">No Aerodrome pool found for ${a}/${b}. You'd have to create it, or LP each side against USDC.</div>`;
+      ? `<div class="lbl">${st.legacy ? 'Aero + old Aerodrome pools' : 'Aero pools'}</div>` + ps.slice(0, 4).map((p) => `<div class="pool"><span><b>${p.a}/${p.b}</b> <span class="venue ${p.venue}">${p.venue === 'legacy' ? 'Old Aerodrome' : 'Aero'}</span> <span class="muted mono">${kindFmt(p.kind)}${p.fee != null ? ' · ' + feeFmt(p.fee) : ''}</span><br><span class="muted mono">TVL ${usd(p.liq)} · 24h vol ${usd(p.vol)} · fee APR <span class="${p.apr >= 0.2 ? 'good' : ''}">${aprFmt(p.apr)}</span></span></span><a href="${p.url}" target="_blank" rel="noopener">View pool ↗</a></div>`).join('')
+      : `<div class="nopool">No ${st.legacy ? '' : 'Aero '}pool found for ${a}/${b}. You'd have to create it, or LP each side against USDC.${st.legacy ? '' : ' (Tick "Include old Aerodrome pools" to see pre-migration pools.)'}</div>`;
   }
 
   // ---------- ranking ----------
@@ -353,7 +354,7 @@
       </tr>`;
     }).join('') || `<tr><td colspan="11" class="muted">No pairs match these filters.</td></tr>`;
     document.querySelectorAll('#rank th[data-k]').forEach((th) => { th.classList.toggle('sorted', th.dataset.k === k); th.classList.toggle('desc', th.dataset.k === k && st.sortDesc); });
-    $('#rankNote').textContent = `${rows.length} pairs · ${st.period} · range ±${st.range}%${rows.length > 300 ? ' · showing first 300' : ''}. ${{ratioVol:'Sorted by lowest ratio vol = least IL',apr:'Sorted by fee APR'}[k] && !(k==='ratioVol'&&st.sortDesc) && !(k==='apr'&&!st.sortDesc) ? ' · '+{ratioVol:'Sorted by lowest ratio vol = least IL',apr:'Sorted by highest fee APR'}[k] : ''}. Tap a row for detail.`;
+    $('#rankNote').textContent = `${rows.length} pairs · ${st.period} · range ±${st.range}%${rows.length > 300 ? ' · showing first 300' : ''}${{ratioVol:'Sorted by lowest ratio vol = least IL',apr:'Sorted by fee APR'}[k] && !(k==='ratioVol'&&st.sortDesc) && !(k==='apr'&&!st.sortDesc) ? ' · '+{ratioVol:'Sorted by lowest ratio vol = least IL',apr:'Sorted by highest fee APR'}[k] : ''}. Tap a row for detail.`;
   }
   document.querySelectorAll('#rank th[data-k]').forEach((th) => th.onclick = () => {
     const k = th.dataset.k;
@@ -361,6 +362,7 @@
     renderRank();
   });
   ['#fPool', '#fSel', '#fUsd', '#fTvl'].forEach((s) => $(s).onchange = renderRank);
+  $('#fLegacy').onchange = (e) => { st.legacy = e.target.checked; renderMatrix(); renderDetail(); renderRank(); };
   $('#fText').oninput = renderRank;
   $('#rank tbody').onclick = (e) => {
     const tr = e.target.closest('tr'); if (!tr || !tr.dataset.a || e.target.closest('a')) return;

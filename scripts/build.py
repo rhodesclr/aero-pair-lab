@@ -65,7 +65,7 @@ allp=[p for v in spools.values() for p in v]+[p for v in cp['pools'].values() fo
 for p in allp:
     a=norm(p['baseToken']['symbol']); b=norm(p['quoteToken']['symbol'])
     if not a or not b or a==b: continue
-    pools[p['pairAddress']]=dict(a=a,b=b,liq=round((p.get('liquidity') or {}).get('usd',0) or 0),vol=round((p.get('volume') or {}).get('h24',0) or 0),url=p['url'],label=(p.get('labels') or [None])[0])
+    pools[p['pairAddress']]=dict(a=a,b=b,liq=round((p.get('liquidity') or {}).get('usd',0) or 0),vol=round((p.get('volume') or {}).get('h24',0) or 0),url=p['url'],label=(p.get('labels') or [None])[0],venue=('aero' if p.get('dexId')=='aero' else 'legacy'))
 # on-chain fee per pool -> fee APR = 24h volume x fee x 365 / TVL
 from pool_fees import pool_fee
 import concurrent.futures as _cf

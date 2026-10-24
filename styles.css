@@ -127,3 +127,7 @@ td a{color:var(--accent);text-decoration:none;font-size:var(--text-xs)}
   .card{padding:var(--space-4)}
   .chart-box{height:180px}
 }
+
+.venue{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:1px 6px;border-radius:4px;vertical-align:1px}
+.venue.aero{background:rgba(91,140,255,.18);color:#9fb8ff}
+.venue.legacy{background:rgba(240,138,75,.15);color:#f0a070}

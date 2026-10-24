@@ -40,4 +40,13 @@ for s,(n,a,cg) in C.items():
     liq=sum((p.get('liquidity') or {}).get('usd',0) or 0 for p in ps)
     print(f"{s:8} {syms} pools={len(ps)} liq={liq:,.0f}")
     out[s]=ps; time.sleep(0.5)
+# New AERO token (Aero launch, Oct 22 2026) - pools on Aero pair against this address
+NEW_AERO='0x3f5bF3EdAc59d650D8fDf9657a71F2f904A3a4Ee'
+try:
+    d=get("https://api.dexscreener.com/token-pairs/v1/base/"+NEW_AERO)
+    extra=[p for p in d if p.get('dexId') in ('aerodrome','aero')]
+    seen={p['pairAddress'] for p in out['AERO']}
+    out['AERO']+= [p for p in extra if p['pairAddress'] not in seen]
+    print('new AERO pools',len(extra))
+except Exception as e: print('new AERO lookup failed',e)
 json.dump({'meta':C,'pools':out},open('crypto_pools.json','w'))

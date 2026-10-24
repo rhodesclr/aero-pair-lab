@@ -1,6 +1,6 @@
 # Aero Pair Lab
 
-Correlation, ratio volatility and impermanent-loss stats for Coinbase tokenized stocks and crypto on Aerodrome (Base).
+Correlation, ratio volatility and impermanent-loss stats for Coinbase tokenized stocks and crypto on Aero (Base), the Aerodrome + Velodrome merger that launched Oct 22, 2026. New Aero pools are shown by default; old Aerodrome pools can be included with a checkbox.
 
 - The site is plain static files (`index.html`, `app.js`, `styles.css`, `data.json`) served by GitHub Pages.
 - `.github/workflows/refresh.yml` runs `scripts/refresh.sh` every day (00:45 UTC) and commits a fresh `data.json`. GitHub Pages republishes automatically.
