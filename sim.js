@@ -375,19 +375,20 @@
     const P = livePrice();
     const age = Math.round((Date.now() - Math.max(pool.liveTs || 0, chainSt?.ts || 0)) / 1000);
     const fresh = (pool.liveTs || chainSt?.ts) && age < 150;
+    const tvlNote = pool.src === 'sugar' ? ' · TVL/vol hourly from Aero' : '';
     const fee = chainSt?.fee ?? pool.fee;
     const k = (l, v, s = '', c = '') => `<div class="kpi"><div class="k">${l}</div><div class="v ${c}">${v}</div><div class="s">${s}</div></div>`;
     $('#simLive').innerHTML =
       k(priceLabel(), fmtP(disp(P)), `${pairLabel()}${pool.chg24 == null ? '' : ' · 24h ' + spct(pool.chg24 / 100)}`) +
       k('AERO APR', pool.venue === 'legacy' ? '0%' : (() => { const r = poolAeroApr(); return r == null ? '—' : pct(r, 1); })(), pool.venue === 'legacy' ? 'old gauges stopped' : chainSt?.sugar ? `staked LPs · ${chainSt.sugar.type > 0 && chainSt.sugar.liquidity ? pct(chainSt.sugar.gaugeL / chainSt.sugar.liquidity, 0) + ' of active L staked' : 'live from Aero'}` : 'hourly', 'good') +
-      k('Pool TVL', usdK(pool.liq), `${pool.venue === 'legacy' ? 'Old Aerodrome' : 'Aero'} · ${kindFmt(pool.kind)}`) +
+      k('Pool TVL', usdK(pool.liq), `${pool.venue === 'legacy' ? 'Old Aerodrome' : 'Aero'} · ${kindFmt(pool.kind)}${tvlNote}`) +
       k('24h volume', usdK(pool.vol), pool.vol1 != null ? `last 1h ${usdK(pool.vol1)}` : '') +
       k('Fee now', feeFmt(fee), isCL(pool) ? 'dynamic, read on-chain' : 'pool fee') +
       k('Pool fee APR', pool.liq ? pct((pool.vol * (fee || 0) * 365) / pool.liq, 1) : '—', 'full pool average');
     $('#simLiveTxt').textContent = fresh ? `Live · ${age}s ago` : 'Connecting…';
     $('#simLiveDot').className = 'live-dot ' + (fresh ? 'on' : 'off');
     $('#simTitle').textContent = `${pool.a}/${pool.b}`;
-    $('#simLinks').innerHTML = `<a href="${pool.url}" target="_blank" rel="noopener">DEX Screener ↗</a> · <a href="https://basescan.org/address/${pool.addr}" target="_blank" rel="noopener">BaseScan ↗</a>`;
+    $('#simLinks').innerHTML = `<a href="${pool.url}" target="_blank" rel="noopener">${pool.src === 'sugar' ? 'Aero app' : 'DEX Screener'} ↗</a> · <a href="https://basescan.org/address/${pool.addr}" target="_blank" rel="noopener">BaseScan ↗</a>`;
   }
   let lightPending = false;
   function lightCompute() { if (lightPending) return; lightPending = true; requestAnimationFrame(() => { lightPending = false; renderNow(); }); }

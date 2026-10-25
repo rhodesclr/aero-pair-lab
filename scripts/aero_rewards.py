@@ -63,3 +63,35 @@ def pool_rewards(addr, usd_by_token, aero):
         val = s['staked0'] / 10 ** decimals(s['t0']) * u0 + s['staked1'] / 10 ** decimals(s['t1']) * u1
     out['rapr'] = round(em * aero * YEAR / val, 4) if val > 0 else None
     return out
+
+# ---------- full Aero pool list (catches pools DEX Screener doesn't index, e.g. Aero basic pools) ----------
+FIELDS = ['lp', 'symbol', 'decimals', 'liquidity', 'type', 'tick', 'sqrt', 't0', 'reserve0', 'staked0', 't1', 'reserve1', 'staked1', 'gauge', 'gaugeL',
+          'alive', 'rewardsManager', 'factory', 'emissions', 'etoken', 'cap', 'poolFee', 'unstakedFee', 'f0', 'f1', 'createdAt', 'nfpm', 'wStart', 'wEnd',
+          'openTick', 'closeTick', 'swaps', 'vol0', 'vol1', 'fee0', 'fee1', 'mev0', 'mev1', 'mevf0', 'mevf1']
+ADDR = {'lp', 't0', 't1', 'gauge', 'rewardsManager', 'factory', 'etoken', 'nfpm'}
+SIGNED = {'type', 'tick', 'openTick', 'closeTick'}
+
+def _decode_lps(r):
+    w = [r[2 + i * 64: 2 + (i + 1) * 64] for i in range((len(r) - 2) // 64)]
+    arr = int(w[0], 16) // 32
+    n = int(w[arr], 16)
+    out = []
+    for k in range(n):
+        b = arr + 1 + int(w[arr + 1 + k], 16) // 32
+        d = {}
+        for i, f in enumerate(FIELDS):
+            if f == 'symbol': continue
+            d[f] = '0x' + w[b + i][-40:] if f in ADDR else _int(w[b + i], f in SIGNED)
+        d['alive'] = bool(d['alive'])
+        out.append(d)
+    return out
+
+SEL_ALL = '0x814b0f0c'
+def sugar_all(page=25):
+    cnt = call(LP_SUGAR, '0x06661abd')  # count()
+    n = int(cnt, 16) if cnt and cnt != 'ERR' else 0
+    res = []
+    for off in range(0, n, page):
+        r = call(LP_SUGAR, SEL_ALL + hex(page)[2:].rjust(64, '0') + hex(off)[2:].rjust(64, '0') + hex(86400)[2:].rjust(64, '0') + '0'.rjust(64, '0'))
+        if r and r != 'ERR': res += _decode_lps(r)
+    return res

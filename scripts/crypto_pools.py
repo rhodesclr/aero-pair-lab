@@ -40,13 +40,17 @@ for s,(n,a,cg) in C.items():
     liq=sum((p.get('liquidity') or {}).get('usd',0) or 0 for p in ps)
     print(f"{s:8} {syms} pools={len(ps)} liq={liq:,.0f}")
     out[s]=ps; time.sleep(0.5)
-# New AERO token (Aero launch, Oct 22 2026) - pools on Aero pair against this address
-NEW_AERO='0x3f5bF3EdAc59d650D8fDf9657a71F2f904A3a4Ee'
-try:
-    d=get("https://api.dexscreener.com/token-pairs/v1/base/"+NEW_AERO)
-    extra=[p for p in d if p.get('dexId') in ('aerodrome','aero')]
-    seen={p['pairAddress'] for p in out['AERO']}
-    out['AERO']+= [p for p in extra if p['pairAddress'] not in seen]
-    print('new AERO pools',len(extra))
-except Exception as e: print('new AERO lookup failed',e)
-json.dump({'meta':C,'pools':out},open('crypto_pools.json','w'))
+# Alternate token addresses used by Aero pools (Aero launch, Oct 22 2026):
+# the new AERO token, and the native "SOL" token Aero's SOL pools use (not Universal's uSOL)
+EXTRA={'AERO':['0x3f5bF3EdAc59d650D8fDf9657a71F2f904A3a4Ee'],'SOL':['0x311935Cd80B76769bF2ecC9D8Ab7635b2139cf82']}
+for s,addrs in EXTRA.items():
+    for ad in addrs:
+        try:
+            d=get("https://api.dexscreener.com/token-pairs/v1/base/"+ad)
+            extra=[p for p in d if p.get('dexId') in ('aerodrome','aero')]
+            seen={p['pairAddress'] for p in out[s]}
+            out[s]+= [p for p in extra if p['pairAddress'] not in seen]
+            print('extra',s,ad[:10],'pools',len(extra))
+        except Exception as e: print('extra lookup failed',s,e)
+        time.sleep(0.5)
+json.dump({'meta':C,'extra':EXTRA,'pools':out},open('crypto_pools.json','w'))

@@ -78,8 +78,53 @@ def _fee(item):
     p['apr']=round(p['vol']*fee*365/p['liq'],4) if fee is not None and p['liq']>0 else None
 with _cf.ThreadPoolExecutor(6) as _ex: list(_ex.map(_fee,pools.items()))
 print('fees', sum(p['fee'] is not None for p in pools.values()),'/',len(pools))
+# Aero pools straight from Aero's LP Sugar contract: adds pools DEX Screener doesn't index (e.g. Aero basic pools)
+from aero_rewards import sugar_all, decimals
+_sym={}
+for x in assets:
+    if x.get('addr'): _sym[x['addr'].lower()]=x['sym']
+for s_,ads in (cp.get('extra') or {}).items():
+    for ad in ads: _sym[ad.lower()]=s_
+_last={s_:next((v for v in reversed([hourly[s_][k] for k in sorted(hourly[s_])]) if v),None) for s_ in hourly}
+def _px(addr,sym):
+    if sym=='USDC': return 1.0
+    return _usd_pre.get(addr) or _last.get(sym)
+_usd_pre={}
+for p in allp:
+    try:
+        pu=float(p.get('priceUsd') or 0); pn=float(p.get('priceNative') or 0)
+        if pu>0: _usd_pre.setdefault(p['baseToken']['address'].lower(),pu)
+        if pu>0 and pn>0: _usd_pre.setdefault(p['quoteToken']['address'].lower(),pu/pn)
+    except Exception: pass
+_have={k.lower() for k in pools}
+_added=0
+try: _sp=sugar_all()
+except Exception as e: _sp=[]; print('sugar_all failed',e)
+for q in _sp:
+    if q['lp'] in _have: continue
+    sa,sb=_sym.get(q['t0']),_sym.get(q['t1'])
+    if not sa or not sb or sa==sb: continue
+    try:
+        d0=decimals(q['t0']); d1=decimals(q['t1'])
+        u0=_px(q['t0'],sa); u1=_px(q['t1'],sb)
+        if u0 is None or u1 is None: continue
+        liq=q['reserve0']/10**d0*u0+q['reserve1']/10**d1*u1
+        if liq<1000: continue
+        vol=(q['vol0']/2/10**d0*u0+q['vol1']/2/10**d1*u1) if q['wEnd']>q['wStart'] else 0
+        cl=q['type']>0
+        fee=q['poolFee']/1e6 if cl else q['poolFee']/1e4
+    except Exception: continue
+    # orientation like DEX Screener: USDC (then ETH) as quote, stock tokens as base
+    a_,b_,ta,tb=sa,sb,q['t0'],q['t1']
+    _st=lambda s_: any(x['sym']==s_ and x['type']=='stock' for x in assets)
+    if (_st(b_) and not _st(a_)) or a_=='USDC' or (a_=='ETH' and b_!='USDC'):
+        a_,b_,ta,tb=b_,a_,tb,ta
+    pools[q['lp']]=dict(addr=q['lp'],a=a_,b=b_,baseAddr=ta,quoteAddr=tb,liq=round(liq),vol=round(vol),url='https://app.aero.xyz/deposit/8453-'+q['lp'],label=None,venue='aero',
+        kind=('CL'+str(q['type'])) if cl else ('stable' if q['type']==0 else 'volatile'),fee=fee,apr=round(vol*fee*365/liq,4) if liq>0 else None,src='sugar')
+    _added+=1
+print('sugar pools added',_added)
 # AERO reward APR (Aero pools only; legacy gauges stopped emitting at the Aero launch)
-from aero_rewards import pool_rewards, aero_usd
+from aero_rewards import pool_rewards, aero_usd, decimals
 _usd={}
 for p in allp:
     try:
@@ -87,6 +132,10 @@ for p in allp:
         if pu>0: _usd.setdefault(p['baseToken']['address'].lower(),pu)
         if pu>0 and pn>0: _usd.setdefault(p['quoteToken']['address'].lower(),pu/pn)
     except Exception: pass
+for k_,v_ in _usd_pre.items(): _usd.setdefault(k_,v_)
+for ad,s_ in _sym.items():
+    if s_ in _last and _last[s_]: _usd.setdefault(ad,_last[s_])
+_usd.setdefault('0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',1.0)
 _aero=aero_usd()
 print('AERO usd',_aero)
 def _rew(p):
