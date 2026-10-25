@@ -193,3 +193,5 @@ td a{color:var(--accent);text-decoration:none;font-size:var(--text-xs)}
   .tabs button{padding:var(--space-3)}
   .asof{align-items:flex-start}
 }
+.kpi.picked{outline:1px solid var(--accent);outline-offset:-1px}
+#simNow{grid-template-columns:repeat(3,minmax(0,1fr))}

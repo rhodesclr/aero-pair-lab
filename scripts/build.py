@@ -78,10 +78,27 @@ def _fee(item):
     p['apr']=round(p['vol']*fee*365/p['liq'],4) if fee is not None and p['liq']>0 else None
 with _cf.ThreadPoolExecutor(6) as _ex: list(_ex.map(_fee,pools.items()))
 print('fees', sum(p['fee'] is not None for p in pools.values()),'/',len(pools))
+# AERO reward APR (Aero pools only; legacy gauges stopped emitting at the Aero launch)
+from aero_rewards import pool_rewards, aero_usd
+_usd={}
+for p in allp:
+    try:
+        pu=float(p.get('priceUsd') or 0); pn=float(p.get('priceNative') or 0)
+        if pu>0: _usd.setdefault(p['baseToken']['address'].lower(),pu)
+        if pu>0 and pn>0: _usd.setdefault(p['quoteToken']['address'].lower(),pu/pn)
+    except Exception: pass
+_aero=aero_usd()
+print('AERO usd',_aero)
+def _rew(p):
+    try: r=pool_rewards(p['addr'],_usd,_aero)
+    except Exception: r=None
+    if r: p.update(rapr=r.get('rapr'),em=r.get('em'),staked=r.get('staked'),ufee=r.get('ufee'))
+with _cf.ThreadPoolExecutor(6) as _ex: list(_ex.map(_rew,[p for p in pools.values() if p['venue']=='aero']))
+print('aero apr', sum(p.get('rapr') is not None for p in pools.values()))
 def pack(series,step):
     keys=sorted({k for s in series.values() for k in s})
     return dict(start=keys[0],end=keys[-1],step=step,prices={s:[series[s].get(k) for k in range(keys[0],keys[-1]+1)] for s in series})
 D=pack(daily,DAY); H=pack(hourly,3600)
-out=dict(generated=int(time.time()),assets=assets,daily=D,hourly=H,pools=sorted(pools.values(),key=lambda x:-x['liq']))
+out=dict(generated=int(time.time()),aeroUsd=_aero,assets=assets,daily=D,hourly=H,pools=sorted(pools.values(),key=lambda x:-x['liq']))
 json.dump(out,open('../data.json','w'),separators=(',',':'))
 print('pools',len(pools))

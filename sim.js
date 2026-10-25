@@ -3,8 +3,9 @@
   const $ = (s) => document.querySelector(s);
   const LC = window.LightweightCharts;
   let D, A;
-  let pool = null, chainSt = null, ser = null, avg7 = null;
-  const S = { addr: null, dep: 1000, lo: null, hi: null, full: false, period: '90D', mode: 'fixed', earn: 'fees', aeroApr: 0, volMode: 'live', customVol: null, feeShare: 100, inv: false };
+  let pool = null, chainSt = null, ser = null, avg7 = null, aeroPx = null;
+  const WIDTH_BPS = { 1: 10, 10: 50, 50: 300, 100: 500, 150: 750, 200: 1000, 250: 1250 };
+  const S = { addr: null, dep: 1000, lo: null, hi: null, full: false, period: '90D', mode: 'fixed', earn: 'fees', aeroSrc: 'live', aeroApr: 0, volMode: 'live', customVol: null, feeShare: 100, inv: false };
   const PERIODS = { '7D': ['hourly', 168], '30D': ['hourly', 720], '90D': ['hourly', 2160], '180D': ['daily', 180], '1Y': ['daily', 365] };
   const WIDTHS = [0.01, 0.02, 0.03, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.5, 'full'];
 
@@ -73,11 +74,24 @@
     const fee = chainSt && chainSt.fee != null ? chainSt.fee : pool.fee;
     const vol = S.volMode === 'custom' ? (S.customVol || 0) : S.volMode === 'avg7' && avg7 ? avg7.avg : pool.vol || 0;
     const decA = chainSt?.decA ?? 18, decB = chainSt?.decB ?? 18;
-    return { dep: S.dep, fee: fee || 0, vol, feeShare: S.feeShare / 100, earn: S.earn, aeroApr: S.aeroApr / 100, cl: isCL(pool), Lpool: chainSt?.L ?? null, decA, decB, tvl: pool.liq || 0 };
+    const sg = chainSt?.sugar;
+    const lu = liveUsd();
+    const ufee = sg ? sg.unstakedFee : pool.ufee ?? 0;
+    const emUsdDay = sg && sg.alive && aeroPx ? sg.emPerSec * 86400 * aeroPx : 0;
+    const stakedUsd = sg && lu ? (sg.stakedA || 0) * lu[0] + (sg.stakedB || 0) * lu[1] : null;
+    return {
+      dep: S.dep, fee: fee || 0, vol, feeShare: (S.feeShare / 100) * (1 - ufee), ufee, earn: S.earn, aeroApr: S.aeroApr / 100,
+      aeroLive: S.aeroSrc === 'live' && !!sg, emUsdDay, Lstaked: sg ? sg.gaugeL : null, stakedUsd, gaugeAlive: sg ? sg.alive : null,
+      cl: isCL(pool), Lpool: chainSt?.L ?? null, decA, decB, tvl: pool.liq || 0,
+    };
   }
   function shareFor(L, o) {
     if (o.cl && o.Lpool > 0) { const Lr = L * Math.pow(10, (o.decA + o.decB) / 2); return Lr / (o.Lpool + Lr); }
     return o.dep / (o.tvl + o.dep);
+  }
+  function aeroShare(L, o) { // your share of the gauge's AERO stream (only in-range staked liquidity earns on Slipstream)
+    if (o.cl) { if (!(o.Lstaked >= 0)) return 0; const Lr = L * Math.pow(10, (o.decA + o.decB) / 2); return Lr / (o.Lstaked + Lr); }
+    return o.stakedUsd != null ? o.dep / (o.stakedUsd + o.dep) : 0;
   }
   function btRange(lo, hi) { // range used for the backtest
     if (S.mode === 'relative' && lo > 0 && isFinite(hi)) { const k = ser.P[0] / livePriceOrLast(); return [lo * k, hi * k]; }
@@ -93,7 +107,7 @@
     const [x1, y1] = amounts(1, P0, lo, hi);
     const L = o.dep / (x1 * ser.ua[0] + y1 * ser.ub[0]);
     const x0 = x1 * L, y0 = y1 * L;
-    const share = shareFor(L, o);
+    const share = shareFor(L, o), ashare = aeroShare(L, o);
     let fees = 0, rew = 0, exits = 0, tIn = 0, tTot = 0, outRun = 0, longestOut = 0;
     let prevIn = inRange(P0, lo, hi), prevV = o.dep;
     const path = keepPath ? { t: [], v: [], h: [], f: [] } : null;
@@ -110,6 +124,7 @@
         if (prevIn) {
           tIn += dt;
           if (o.earn === 'fees') fees += o.vol * o.fee * o.feeShare * share * dt;
+          else if (o.aeroLive) rew += o.emUsdDay * ashare * dt;
           else rew += (prevV * o.aeroApr * dt) / 365;
           outRun = 0;
         } else { outRun += dt; longestOut = Math.max(longestOut, outRun); }
@@ -134,9 +149,12 @@
     const [x, y] = [x1 * L, y1 * L];
     const inR = inRange(Pn, lo, hi);
     const share = shareFor(L, o);
-    const daily = !inR ? 0 : o.earn === 'fees' ? o.vol * o.fee * o.feeShare * share : (o.dep * o.aeroApr) / 365;
+    const feeDaily = inR ? o.vol * o.fee * o.feeShare * share : 0;
+    const ash = aeroShare(L, o);
+    const aeroDaily = !inR ? 0 : o.aeroLive ? o.emUsdDay * ash : (o.dep * o.aeroApr) / 365;
+    const daily = o.earn === 'fees' ? feeDaily : aeroDaily;
     const Lfull = o.dep / (2 * Math.sqrt(Pn) * lu[1]);
-    return { x, y, ua: x * lu[0], ub: y * lu[1], inR, share, daily, apr: (daily * 365) / o.dep, eff: L / Lfull };
+    return { x, y, ua: x * lu[0], ub: y * lu[1], inR, share, ash, daily, feeDaily, aeroDaily, feeApr: (feeDaily * 365) / o.dep, aeroAprNow: (aeroDaily * 365) / o.dep, apr: (daily * 365) / o.dep, eff: L / Lfull };
   }
 
   // ---------- display transform (invert) ----------
@@ -312,7 +330,9 @@
       if (id === 'custom' && S.customVol == null) S.customVol = pool?.vol || 0;
       renderSegs(); compute();
     });
-    $('#simAeroWrap').hidden = S.earn !== 'aero';
+    seg($('#simAeroSrc'), [['live', 'Live from Aero'], ['manual', 'Enter my own']], S.aeroSrc, (id) => { S.aeroSrc = id; renderSegs(); compute(); });
+    $('#simAeroSrcWrap').hidden = S.earn !== 'aero';
+    $('#simAeroWrap').hidden = S.earn !== 'aero' || S.aeroSrc !== 'manual';
     $('#simCustomVolWrap').hidden = S.volMode !== 'custom';
     if (S.volMode === 'custom') $('#simCustomVol').value = Math.round(S.customVol || 0);
     const presets = [['0.01', '±1%'], ['0.02', '±2%'], ['0.05', '±5%'], ['0.1', '±10%'], ['0.2', '±20%'], ['0.5', '±50%'], ['full', 'Full range']];
@@ -337,6 +357,19 @@
     $('#simBasicNote').hidden = isCL(pool);
     updatePriceLines();
   }
+  function poolAeroApr() {
+    const sg = chainSt?.sugar, lu = liveUsd();
+    if (!sg || !aeroPx || !lu) return pool.rapr ?? null;
+    if (!sg.alive || !sg.emPerSec) return 0;
+    const emYr = sg.emPerSec * 365 * 86400 * aeroPx;
+    let val;
+    if (sg.type > 0) {
+      const aIs0 = pool.baseAddr ? pool.baseAddr.toLowerCase() === chainSt.t0 : true;
+      const u1 = aIs0 ? lu[1] : lu[0];
+      val = (sg.gaugeL / Math.pow(10, (chainSt.d0 + chainSt.d1) / 2)) * Math.sqrt(chainSt.p10) * ((WIDTH_BPS[sg.type] ?? 300) / 1e4) * u1;
+    } else val = (sg.stakedA || 0) * lu[0] + (sg.stakedB || 0) * lu[1];
+    return val > 0 ? emYr / val : null;
+  }
   function renderLive() {
     if (!pool) return;
     const P = livePrice();
@@ -345,8 +378,8 @@
     const fee = chainSt?.fee ?? pool.fee;
     const k = (l, v, s = '', c = '') => `<div class="kpi"><div class="k">${l}</div><div class="v ${c}">${v}</div><div class="s">${s}</div></div>`;
     $('#simLive').innerHTML =
-      k(priceLabel(), fmtP(disp(P)), pairLabel()) +
-      k('24h change', pool.chg24 == null ? '—' : spct(pool.chg24 / 100), `${pool.a} in USD`, cls(pool.chg24)) +
+      k(priceLabel(), fmtP(disp(P)), `${pairLabel()}${pool.chg24 == null ? '' : ' · 24h ' + spct(pool.chg24 / 100)}`) +
+      k('AERO APR', pool.venue === 'legacy' ? '0%' : (() => { const r = poolAeroApr(); return r == null ? '—' : pct(r, 1); })(), pool.venue === 'legacy' ? 'old gauges stopped' : chainSt?.sugar ? `staked LPs · ${chainSt.sugar.type > 0 && chainSt.sugar.liquidity ? pct(chainSt.sugar.gaugeL / chainSt.sugar.liquidity, 0) + ' of active L staked' : 'live from Aero'}` : 'hourly', 'good') +
       k('Pool TVL', usdK(pool.liq), `${pool.venue === 'legacy' ? 'Old Aerodrome' : 'Aero'} · ${kindFmt(pool.kind)}`) +
       k('24h volume', usdK(pool.vol), pool.vol1 != null ? `last 1h ${usdK(pool.vol1)}` : '') +
       k('Fee now', feeFmt(fee), isCL(pool) ? 'dynamic, read on-chain' : 'pool fee') +
@@ -365,11 +398,14 @@
     const lu = liveUsd();
     const k = (l, v, s = '', c = '') => `<div class="kpi"><div class="k">${l}</div><div class="v ${c}">${v}</div><div class="s">${s}</div></div>`;
     if (!n) { $('#simNow').innerHTML = '<div class="nopool">Waiting for the live pool price…</div>'; return; }
-    const what = S.earn === 'fees' ? 'fee' : 'AERO reward';
     const warn = isCL(pool) && !(o.Lpool > 0) ? ' · on-chain liquidity unavailable, rough estimate' : '';
+    const legacy = pool.venue === 'legacy';
+    const aeroSub = legacy ? 'old Aerodrome gauges stopped' : o.gaugeAlive === false ? 'no active gauge on this pool' : !n.inR ? 'price is outside your range' : o.aeroLive ? `live · AERO ${usd(aeroPx, 4)} · ${pct(n.ash, n.ash < 0.001 ? 3 : 2)} of staked L` : S.aeroSrc === 'live' ? 'waiting for Aero data…' : 'your manual APR';
+    const pick = (m) => (S.earn === m ? ' picked' : '');
     $('#simNow').innerHTML =
-      k(`Est. ${what} APR`, n.inR ? pct(n.apr, 1) : '0%', n.inR ? 'at current price & volume' + warn : 'price is outside your range', n.inR ? (n.apr > 0.2 ? 'good' : '') : 'bad') +
-      k('Est. earnings', n.inR ? usd(n.daily, 2) + '/day' : '$0/day', n.inR ? usd(n.daily * 30, 0) + '/month' : 'until price re-enters') +
+      `<div class="kpi${pick('fees')}"><div class="k">Est. fee APR · unstaked</div><div class="v ${n.inR ? (n.feeApr > 0.2 ? 'good' : '') : 'bad'}">${n.inR ? pct(n.feeApr, 1) : '0%'}</div><div class="s">${n.inR ? 'trading fees at current volume' + (o.ufee ? ` · after ${pct(o.ufee, 0)} unstaked fee` : '') + warn : 'price is outside your range'}</div></div>` +
+      `<div class="kpi${pick('aero')}"><div class="k">Est. AERO APR · staked</div><div class="v ${n.inR && n.aeroAprNow > 0 ? 'good' : n.inR ? '' : 'bad'}">${legacy ? '0%' : pct(n.aeroAprNow, 1)}</div><div class="s">${aeroSub}</div></div>` +
+      k(`Est. earnings · ${S.earn === 'fees' ? 'fees' : 'AERO'}`, n.inR ? usd(n.daily, 2) + '/day' : '$0/day', n.inR ? usd(n.daily * 30, 0) + '/month' : 'until price re-enters') +
       k('Your share of pool', pct(n.share, n.share < 0.001 ? 3 : 2), isCL(pool) ? 'of in-range liquidity' : 'of pool TVL') +
       k('Capital efficiency', isCL(pool) && !S.full ? '×' + n.eff.toFixed(1) : '×1', 'vs full range') +
       `<div class="kpi wide"><div class="k">Deposit now (${usd(S.dep)})</div><div class="v sm">${amt(n.x)} ${pool.a} <span class="muted">${usd(n.ua)}</span> + ${amt(n.y)} ${pool.b} <span class="muted">${usd(n.ub)}</span></div><div class="s">${lu ? `${pool.a} ${usd(lu[0], lu[0] < 10 ? 4 : 2)} · ${pool.b} ${usd(lu[1], lu[1] < 10 ? 4 : 2)}` : ''}</div></div>`;
@@ -421,14 +457,16 @@
     if (!S.full) { q.set('lo', +S.lo.toPrecision(8)); q.set('hi', +S.hi.toPrecision(8)); } else q.set('full', 1);
     if (S.inv) q.set('inv', 1);
     if (S.mode !== 'fixed') q.set('m', S.mode);
+    if (S.earn !== 'fees') q.set('e', S.earn);
     history.replaceState(null, '', '#sim?' + q.toString());
   }
 
   async function refreshChain() {
     if (!pool) return;
     const p = pool;
-    const stt = await Live.poolState(p).catch(() => null);
-    if (stt && p === pool) { chainSt = { ...stt, addr: p.addr }; renderLive(); pushLivePoint(); renderNow(); }
+    const [stt, ap] = await Promise.all([Live.poolState(p).catch(() => null), Live.aeroUsd().catch(() => null)]);
+    if (ap) aeroPx = ap;
+    if (stt && p === pool) { const first = !chainSt?.sugar && stt.sugar; chainSt = { ...stt, addr: p.addr }; renderLive(); pushLivePoint(); if (first) compute(); else renderNow(); }
   }
   async function selectPool(addr, keep) {
     const p = D.pools.find((x) => x.addr.toLowerCase() === String(addr).toLowerCase());
@@ -476,6 +514,7 @@
     if (q.get('p') && PERIODS[q.get('p')]) S.period = q.get('p');
     if (q.get('inv')) S.inv = true;
     if (q.get('m') === 'relative') S.mode = 'relative';
+    if (q.get('e') === 'aero') S.earn = 'aero';
     $('#simDep').value = S.dep;
     $('#simFeeShare').value = S.feeShare;
     const start = q.get('pool') || D.pools.filter((p) => p.venue !== 'legacy' && isCL(p)).sort((x, y) => y.liq - x.liq)[0]?.addr;

@@ -115,6 +115,7 @@
           <th data-k="vol" class="num">24h vol</th>
           <th data-k="turn" class="num">Vol/TVL</th>
           <th data-k="apr" class="num" title="24h volume × pool fee × 365 ÷ TVL. Unstaked LPs only.">Fee APR</th>
+          <th data-k="rapr" class="num" title="AERO rewards APR for staked LPs, from Aero's LP Sugar contract (same formula as the Aero app). Biggest pool for the pair. Updated hourly.">AERO APR</th>
           <th>Pool</th>
         </tr></thead>
         <tbody></tbody>
@@ -131,6 +132,7 @@
       <li><b>IL full range</b> is the realized impermanent loss of a v2-style (full-range) position opened at the start of the period vs simply holding, before fees and emissions. Concentrated ranges amplify it.</li>
       <li><b>In range</b> is the share of the period the A/B price stayed within ±your range of the starting price.</li>
       <li><b>Vol/TVL</b> is 24h volume ÷ pool liquidity.</li>
+      <li><b>AERO APR</b> = the pool's AERO reward stream (read from Aero's LP Sugar contract on Base, the same contract the Aero app uses) × AERO price × 365 ÷ the value of liquidity staked in the gauge, using the Aero app's formula. It's for the pair's biggest pool and refreshes hourly. You earn this <b>instead of</b> trading fees when you stake.</li>
       <li><b>Fee APR</b> = last 24h volume × the pool's swap fee (read on-chain) × 365 ÷ pool TVL, combined across the pair's pools. It's a one-day snapshot, so it jumps around. On Aero, trading fees go to <b>unstaked</b> LPs; if you stake in the gauge you give up fees and earn AERO emissions instead (not shown). For Slipstream (concentrated) pools this is the pool-wide average — a tight in-range position earns more, an out-of-range one earns nothing.</li>
       <li>Stock tokens use the underlying share price (the Coinbase tokens are 1:1 backed, with a small dividend multiplier), so correlation history predates each token's launch on Aero/Aerodrome. US markets are closed nights and weekends — the stock side is flat then, while crypto keeps moving.</li>
     </ul>
@@ -176,13 +178,14 @@
       <div class="ctl"><span class="lbl">Backtest period</span><div class="seg" id="simPeriods"></div></div>
       <div class="ctl"><span class="lbl">Backtest range</span><div class="seg" id="simMode"></div></div>
       <div class="ctl"><span class="lbl">You earn</span><div class="seg" id="simEarn"></div>
+        <div class="sub-in" id="simAeroSrcWrap" hidden><span class="muted small">AERO reward rate</span><div class="seg" id="simAeroSrc"></div></div>
         <label class="sub-in" id="simAeroWrap" hidden><span class="muted small">AERO reward APR % (from the Aero app)</span><input id="simAero" type="number" min="0" step="1" value="0"></label>
       </div>
       <div class="ctl"><span class="lbl">Daily volume assumption</span><div class="seg" id="simVolMode"></div>
         <label class="sub-in" id="simCustomVolWrap" hidden><span class="muted small">Custom daily volume (USD)</span><input id="simCustomVol" type="number" min="0" step="1000"></label>
       </div>
       <div class="ctl"><label class="lbl" for="simFeeShare">LP share of swap fees %</label><input id="simFeeShare" type="number" min="0" max="100" step="5" value="100">
-        <span class="muted small">Lower this if part of the fee goes to the protocol.</span></div>
+        <span class="muted small">Aero's unstaked fee is already taken off automatically. Lower this only to stress-test.</span></div>
     </aside>
 
     <div class="sim-main">
@@ -214,7 +217,7 @@
       <li><b>Live numbers.</b> Pool price, TVL and volume refresh from DEX Screener every 60 seconds. The pool's current price, active liquidity and dynamic swap fee are read straight from the pool contract on Base every 15 seconds.</li>
       <li><b>Price history.</b> Aero pools only launched on Oct 22, 2026, so the up-to-1-year chart is built from each token's USD price (Coinbase Exchange for crypto, Yahoo Finance for the underlying share of stock tokens) and divided into the pair price, with the live pool price appended. Hourly bars for 7D–90D, daily for 180D–1Y.</li>
       <li><b>Fees.</b> Each hour (or day) in range earns <i>daily volume × fee × your share of active liquidity</i>. For Slipstream pools your share is your liquidity ÷ (pool's active liquidity + yours), so tighter ranges earn more per dollar. Out of range earns nothing. Volume and liquidity are held at today's level for the whole backtest, which is the main simplification.</li>
-      <li><b>AERO rewards.</b> On Aero you either earn trading fees or stake for AERO emissions, not both. In AERO mode, enter the reward APR shown in the Aero app; it accrues only while your range is in range.</li>
+      <li><b>AERO rewards.</b> On Aero you either earn trading fees (unstaked) or stake in the gauge for AERO rewards, not both. The simulator reads the pool's live AERO stream from Aero's LP Sugar contract, the same one the Aero app uses. Your share = your liquidity ÷ (staked in-range liquidity + yours), so it's specific to your range, and it pays only while you're in range. The pool-level AERO APR in the top strip uses the Aero app's own formula. Backtests hold today's AERO rate and price constant. Old Aerodrome gauges stopped paying at the Aero launch.</li>
       <li><b>IL and net.</b> Impermanent loss compares the LP position with simply holding the tokens you deposited. Net vs holding = fees (or rewards) − IL. Total P&amp;L is in USD versus your deposit.</li>
       <li><b>Backtest range.</b> "My exact prices" checks whether your chosen prices were in range across the period. "Same % width from start" opens the same-width range around the price at the start of the period, which is the fairer test of a strategy.</li>
       <li>Estimates only, not financial advice. Gas, rebalancing, slippage and price impact are not included.</li>

@@ -320,7 +320,8 @@
       const feeUsd = ps.reduce((s, p) => s + (p.fee != null ? p.vol * p.fee : 0), 0);
       const feeLiq = ps.reduce((s, p) => s + (p.fee != null ? p.liq : 0), 0);
       const apr = feeLiq > 0 ? (feeUsd * 365) / feeLiq : null;
-      rows.push({ a, b, pair: a + '/' + b, ...r, liq: ps.length ? liq : null, vol: ps.length ? vol : null, turn: ps.length && liq > 0 ? vol / liq : null, apr, url: ps.slice().sort((x, y) => y.liq - x.liq)[0]?.url, sim: ps.slice().sort((x, y) => y.liq - x.liq)[0]?.addr });
+      const top = ps.slice().sort((x, y) => y.liq - x.liq)[0];
+      rows.push({ rapr: top ? top.rapr ?? null : null, a, b, pair: a + '/' + b, ...r, liq: ps.length ? liq : null, vol: ps.length ? vol : null, turn: ps.length && liq > 0 ? vol / liq : null, apr, url: ps.slice().sort((x, y) => y.liq - x.liq)[0]?.url, sim: ps.slice().sort((x, y) => y.liq - x.liq)[0]?.addr });
     }
     return rows;
   }
@@ -348,15 +349,16 @@
         <td class="num">${usd(r.vol)}</td>
         <td class="num">${r.turn == null ? '—' : r.turn.toFixed(2) + '×'}</td>
         <td class="num ${r.apr == null ? '' : r.apr >= 0.2 ? 'good' : r.apr < 0.02 ? 'muted' : ''}">${aprFmt(r.apr)}</td>
+        <td class="num ${r.rapr == null ? '' : r.rapr >= 0.3 ? 'good' : r.rapr < 0.02 ? 'muted' : ''}">${aprFmt(r.rapr)}</td>
         <td>${r.url ? `<button class="btn sim-btn sm" data-sim="${r.sim}">Sim</button> <a href="${r.url}" target="_blank" rel="noopener">View ↗</a>` : '<span class="muted small">none</span>'}</td>
       </tr>`;
-    }).join('') || `<tr><td colspan="11" class="muted">No pairs match these filters.</td></tr>`;
+    }).join('') || `<tr><td colspan="12" class="muted">No pairs match these filters.</td></tr>`;
     document.querySelectorAll('#rank th[data-k]').forEach((th) => { th.classList.toggle('sorted', th.dataset.k === k); th.classList.toggle('desc', th.dataset.k === k && st.sortDesc); });
     $('#rankNote').textContent = `${rows.length} pairs · ${st.period} · range ±${st.range}%${rows.length > 300 ? ' · showing first 300' : ''}${{ratioVol:'Sorted by lowest ratio vol = least IL',apr:'Sorted by fee APR'}[k] && !(k==='ratioVol'&&st.sortDesc) && !(k==='apr'&&!st.sortDesc) ? ' · '+{ratioVol:'Sorted by lowest ratio vol = least IL',apr:'Sorted by highest fee APR'}[k] : ''}. Tap a row for detail.`;
   }
   document.querySelectorAll('#rank th[data-k]').forEach((th) => th.onclick = () => {
     const k = th.dataset.k;
-    if (st.sortK === k) st.sortDesc = !st.sortDesc; else { st.sortK = k; st.sortDesc = ['corr', 'inRange', 'liq', 'vol', 'turn', 'apr', 'il'].includes(k); }
+    if (st.sortK === k) st.sortDesc = !st.sortDesc; else { st.sortK = k; st.sortDesc = ['corr', 'inRange', 'liq', 'vol', 'turn', 'apr', 'rapr', 'il'].includes(k); }
     renderRank();
   });
   ['#fPool', '#fSel', '#fUsd', '#fTvl'].forEach((s) => $(s).onchange = renderRank);
@@ -373,7 +375,7 @@
     if (a === b) { $('#poolList').innerHTML = ''; return; }
     const ps = poolsFor(a, b).slice().sort((x, y) => y.liq - x.liq);
     $('#poolList').innerHTML = ps.length
-      ? `<div class="lbl">${st.legacy ? 'Aero + old Aerodrome pools' : 'Aero pools'}</div>` + ps.slice(0, 4).map((p) => `<div class="pool"><span><b>${p.a}/${p.b}</b> <span class="venue ${p.venue}">${p.venue === 'legacy' ? 'Old Aerodrome' : 'Aero'}</span> <span class="muted mono">${kindFmt(p.kind)}${p.fee != null ? ' · ' + feeFmt(p.fee) : ''}</span><br><span class="muted mono">TVL ${usd(p.liq)} · 24h vol ${usd(p.vol)} · fee APR <span class="${p.apr >= 0.2 ? 'good' : ''}">${aprFmt(p.apr)}</span></span></span><span class="pool-acts"><button class="btn sim-btn" data-sim="${p.addr}">Simulate</button><a href="${p.url}" target="_blank" rel="noopener">View ↗</a></span></div>`).join('')
+      ? `<div class="lbl">${st.legacy ? 'Aero + old Aerodrome pools' : 'Aero pools'}</div>` + ps.slice(0, 4).map((p) => `<div class="pool"><span><b>${p.a}/${p.b}</b> <span class="venue ${p.venue}">${p.venue === 'legacy' ? 'Old Aerodrome' : 'Aero'}</span> <span class="muted mono">${kindFmt(p.kind)}${p.fee != null ? ' · ' + feeFmt(p.fee) : ''}</span><br><span class="muted mono">TVL ${usd(p.liq)} · 24h vol ${usd(p.vol)} · fee APR <span class="${p.apr >= 0.2 ? 'good' : ''}">${aprFmt(p.apr)}</span>${p.venue === 'aero' ? ` · AERO APR <span class="${p.rapr >= 0.3 ? 'good' : ''}">${aprFmt(p.rapr)}</span>` : ''}</span></span><span class="pool-acts"><button class="btn sim-btn" data-sim="${p.addr}">Simulate</button><a href="${p.url}" target="_blank" rel="noopener">View ↗</a></span></div>`).join('')
       : `<div class="nopool">No ${st.legacy ? '' : 'Aero '}pool found for ${a}/${b}. You'd have to create it, or LP each side against USDC.${st.legacy ? '' : ' (Tick "Include old Aerodrome pools" to see pre-migration pools.)'}</div>`;
 
   }

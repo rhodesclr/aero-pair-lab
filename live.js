@@ -61,6 +61,30 @@
     return new Array(calls.length).fill(null);
   }
   const SEL = { token0: '0x0dfe1681', token1: '0xd21220a7', decimals: '0x313ce567', slot0: '0x3850c7bd', liquidity: '0x1a686502', fee: '0xddca3f43', reserves: '0x0902f1ac' };
+  const LP_SUGAR = '0x082965f28c1aF8c7e236F8A8909596B01D8C6e72'; // Aero LP Sugar (same contract the Aero app reads)
+  const NEW_AERO = '0x3f5bf3edac59d650d8fdf9657a71f2f904a3a4ee';
+  function decodeSugar(r, meta) {
+    if (!r || r.length < 2 + 64 * 41) return null;
+    const w = (i) => r.slice(2 + i * 64, 2 + (i + 1) * 64);
+    const b = parseInt(w(0), 16) / 32;
+    const u = (i) => BigInt('0x' + w(b + i));
+    const sgn = (i) => { const v = u(i); return Number(v >= 1n << 255n ? v - (1n << 256n) : v); };
+    return {
+      liquidity: Number(u(3)), type: sgn(4), gaugeL: Number(u(14)), alive: u(15) === 1n,
+      gauge: '0x' + w(b + 13).slice(-40), staked0: Number(u(9)) / 10 ** meta.d0, staked1: Number(u(12)) / 10 ** meta.d1,
+      emPerSec: Number(u(18)) / 1e18, unstakedFee: Number(u(22)) / 1e6, poolFee: Number(u(21)) / 1e6,
+    };
+  }
+  let aeroPx = { v: null, ts: 0 };
+  async function aeroUsd() {
+    if (aeroPx.v && Date.now() - aeroPx.ts < 60e3) return aeroPx.v;
+    try {
+      const j = await getJSON('https://api.dexscreener.com/latest/dex/tokens/' + NEW_AERO);
+      const ps = (j.pairs || []).filter((p) => p.chainId === 'base' && p.baseToken.address.toLowerCase() === NEW_AERO).sort((x, y) => (y.liquidity?.usd || 0) - (x.liquidity?.usd || 0));
+      if (ps.length) aeroPx = { v: +ps[0].priceUsd, ts: Date.now() };
+    } catch (e) { /* keep last */ }
+    return aeroPx.v || (D && D.aeroUsd) || null;
+  }
   const metaCache = {};
   async function poolState(p) {
     const a = p.addr;
@@ -75,7 +99,10 @@
     }
     const st = { ...meta, ts: Date.now() };
     if (isCL) {
-      const [s0, L, f] = await rpc([[a, SEL.slot0], [a, SEL.liquidity], [a, SEL.fee]]);
+      const calls = [[a, SEL.slot0], [a, SEL.liquidity], [a, SEL.fee]];
+      if (p.venue === 'aero') calls.push([LP_SUGAR, '0xa773f925' + a.slice(2).toLowerCase().padStart(64, '0') + (86400).toString(16).padStart(64, '0')]);
+      const [s0, L, f, sg] = await rpc(calls);
+      st.sugar = decodeSugar(sg, meta);
       if (s0) {
         const sp = Number(BigInt('0x' + s0.slice(2, 66))) / 2 ** 96;
         st.p10 = sp * sp * 10 ** (meta.d0 - meta.d1); // token1 per token0
@@ -83,7 +110,10 @@
       if (L) st.L = Number(BigInt(L));
       if (f) st.fee = parseInt(f, 16) / 1e6;
     } else {
-      const [r] = await rpc([[a, SEL.reserves]]);
+      const calls = [[a, SEL.reserves]];
+      if (p.venue === 'aero') calls.push([LP_SUGAR, '0xa773f925' + a.slice(2).toLowerCase().padStart(64, '0') + (86400).toString(16).padStart(64, '0')]);
+      const [r, sg] = await rpc(calls);
+      st.sugar = decodeSugar(sg, meta);
       if (r) {
         st.r0 = Number(BigInt('0x' + r.slice(2, 66))) / 10 ** meta.d0;
         st.r1 = Number(BigInt('0x' + r.slice(66, 130))) / 10 ** meta.d1;
@@ -95,6 +125,7 @@
     if (p.baseAddr) {
       const aIs0 = p.baseAddr.toLowerCase() === meta.t0;
       st.decA = aIs0 ? meta.d0 : meta.d1; st.decB = aIs0 ? meta.d1 : meta.d0;
+      if (st.sugar) { st.sugar.stakedA = aIs0 ? st.sugar.staked0 : st.sugar.staked1; st.sugar.stakedB = aIs0 ? st.sugar.staked1 : st.sugar.staked0; }
     }
     return st;
   }
@@ -121,6 +152,7 @@
   };
   Live.refreshPools = refreshPools;
   Live.poolState = poolState;
+  Live.aeroUsd = aeroUsd;
   Live.avgVolume7d = avgVolume7d;
   window.Live = Live;
 })();
