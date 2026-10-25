@@ -1,29 +1,55 @@
-name: Daily data refresh
+name: Hourly data refresh + deploy
 on:
   schedule:
-    - cron: "45 0 * * *"   # 00:45 UTC = 5:45 PM Pacific (PDT) / 4:45 PM (PST)
+    - cron: "7 * * * *"   # every hour at :07 UTC
+  push:
+    branches: [main]
   workflow_dispatch: {}
 permissions:
   contents: write
+  pages: write
+  id-token: write
 concurrency:
   group: refresh
   cancel-in-progress: false
 jobs:
-  refresh:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Rebuild data.json
+        id: refresh
+        continue-on-error: true
         run: bash scripts/refresh.sh
-      - name: Commit updated data
+      # Commit data once a day (keeps the repo small and the schedule alive); hourly data ships straight to Pages.
+      - name: Daily commit of data
+        if: steps.refresh.outcome == 'success' && github.event_name == 'schedule'
         run: |
+          if [ "$(date -u +%H)" != "00" ]; then echo "Not the daily slot"; exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
           git add data.json
           if git diff --cached --quiet; then echo "No changes"; exit 0; fi
           git commit -m "Daily data refresh $(date -u +%Y-%m-%d)"
-          git push
+          git pull --rebase && git push
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp index.html app.js sim.js live.js styles.css manifest.webmanifest sw.js data.json .nojekyll _site/
+          cp -r icons _site/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
