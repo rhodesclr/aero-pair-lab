@@ -351,8 +351,10 @@
     if (document.activeElement !== minI) minI.value = S.full ? '0' : fmtP(dl).replace(/,/g, '');
     if (document.activeElement !== maxI) maxI.value = S.full ? '∞' : fmtP(dh).replace(/,/g, '');
     minI.disabled = maxI.disabled = !isCL(pool);
-    $('#simMinPct').textContent = S.full || !dP ? '' : spct(dl / dP - 1) + ' from current';
-    $('#simMaxPct').textContent = S.full || !dP ? '' : spct(dh / dP - 1) + ' from current';
+    const dnI = $('#simDnPct'), upI = $('#simUpPct');
+    dnI.disabled = upI.disabled = !isCL(pool);
+    if (document.activeElement !== dnI) dnI.value = S.full || !dP ? '' : +((1 - dl / dP) * 100).toFixed(2);
+    if (document.activeElement !== upI) upI.value = S.full || !dP ? '' : +((dh / dP - 1) * 100).toFixed(2);
     $('#simUnit').textContent = pool ? pairLabel() : '';
     $('#simBasicNote').hidden = isCL(pool);
     updatePriceLines();
@@ -378,13 +380,20 @@
     const tvlNote = pool.src === 'sugar' ? ' · TVL/vol hourly from Aero' : '';
     const fee = chainSt?.fee ?? pool.fee;
     const k = (l, v, s = '', c = '') => `<div class="kpi"><div class="k">${l}</div><div class="v ${c}">${v}</div><div class="s">${s}</div></div>`;
+    const n = ser && S.lo != null ? nowEst(S.lo, S.hi, params()) : null;
     $('#simLive').innerHTML =
       k(priceLabel(), fmtP(disp(P)), `${pairLabel()}${pool.chg24 == null ? '' : ' · 24h ' + spct(pool.chg24 / 100)}`) +
-      k('AERO APR', pool.venue === 'legacy' ? '0%' : (() => { const r = poolAeroApr(); return r == null ? '—' : pct(r, 1); })(), pool.venue === 'legacy' ? 'old gauges stopped' : chainSt?.sugar ? `staked LPs · ${chainSt.sugar.type > 0 && chainSt.sugar.liquidity ? pct(chainSt.sugar.gaugeL / chainSt.sugar.liquidity, 0) + ' of active L staked' : 'live from Aero'}` : 'hourly', 'good') +
+      (() => {
+        if (pool.venue === 'legacy') return k('AERO APR · your range', '0%', 'old Aerodrome gauges stopped');
+        const ref = poolAeroApr();
+        const refTxt = ref == null ? '' : isCL(pool) ? `Aero app shows ${pct(ref, 1)} (its ±${((WIDTH_BPS[pool.kind?.slice(2)] ?? 300) / 100).toFixed(2).replace(/\.?0+$/, '')}% reference range)` : `Aero app shows ${pct(ref, 1)}`;
+        if (!n) return k('AERO APR · your range', '—', refTxt);
+        return k('AERO APR · your range', n.inR ? pct(n.aeroAprNow, 1) : '0%', n.inR ? refTxt : 'out of range · ' + refTxt, n.inR && n.aeroAprNow > 0 ? 'good' : n.inR ? '' : 'bad');
+      })() +
       k('Pool TVL', usdK(pool.liq), `${pool.venue === 'legacy' ? 'Old Aerodrome' : 'Aero'} · ${kindFmt(pool.kind)}${tvlNote}`) +
       k('24h volume', usdK(pool.vol), pool.vol1 != null ? `last 1h ${usdK(pool.vol1)}` : '') +
       k('Fee now', feeFmt(fee), isCL(pool) ? 'dynamic, read on-chain' : 'pool fee') +
-      k('Pool fee APR', pool.liq ? pct((pool.vol * (fee || 0) * 365) / pool.liq, 1) : '—', 'full pool average');
+      k('Fee APR · your range', !n ? '—' : n.inR ? pct(n.feeApr, 1) : '0%', `unstaked · pool average ${pool.liq ? pct((pool.vol * (fee || 0) * 365) / pool.liq, 1) : '—'}`, n && !n.inR ? 'bad' : '');
     $('#simLiveTxt').textContent = fresh ? `Live · ${age}s ago` : 'Connecting…';
     $('#simLiveDot').className = 'live-dot ' + (fresh ? 'on' : 'off');
     $('#simTitle').textContent = `${pool.a}/${pool.b}`;
@@ -394,6 +403,7 @@
   function lightCompute() { if (lightPending) return; lightPending = true; requestAnimationFrame(() => { lightPending = false; renderNow(); }); }
   function renderNow() {
     if (!pool || !ser) return;
+    renderLive();
     const o = params();
     const n = nowEst(S.lo, S.hi, o);
     const lu = liveUsd();
@@ -501,6 +511,15 @@
     const parseNum = (v) => +String(v).replace(/[, ]/g, '');
     const onRange = () => { const dl = parseNum($('#simMin').value), dh = parseNum($('#simMax').value); if (dl > 0 && dh > dl) { setDispRange(dl, dh); compute(); } };
     $('#simMin').onchange = onRange; $('#simMax').onchange = onRange;
+    const onPct = () => {
+      const dn = parseNum($('#simDnPct').value), up = parseNum($('#simUpPct').value);
+      const P = livePrice() || ser?.P[ser.P.length - 1];
+      if (!P || isNaN(dn) || isNaN(up) || dn >= 100 || -dn >= up) return;
+      const dP = disp(P);
+      setDispRange(dP * (1 - dn / 100), dP * (1 + up / 100));
+      compute();
+    };
+    $('#simDnPct').oninput = onPct; $('#simUpPct').oninput = onPct;
     $('#simPresets').onclick = (e) => { const b = e.target.closest('button[data-w]'); if (!b || b.disabled) return; applyWidth(b.dataset.w === 'full' ? 'full' : +b.dataset.w); compute(); };
     $('#simFlip').onclick = () => { S.inv = !S.inv; setChartData(); compute(); renderLive(); };
     $('#simAero').oninput = (e) => { S.aeroApr = +e.target.value || 0; compute(); };

@@ -40,7 +40,8 @@
     sel: PRESETS['Stocks × crypto'].filter((s) => A[s]),
     period: '30D',
     metric: 'corr',
-    range: 10,
+    dn: 10,
+    up: 10,
     pair: ['NVDAc', 'GOOGLc'],
     sortK: 'ratioVol',
     sortDesc: false,
@@ -53,8 +54,8 @@
     if (A[sym].type === 'stable' && sym === 'USDC') return null; // constant 1
     return D[res].prices[sym];
   }
-  function pairStats(a, b, pid = st.period, rangePct = st.range) {
-    const key = a + '|' + b + '|' + pid + '|' + rangePct;
+  function pairStats(a, b, pid = st.period, dn = st.dn, up = st.up) {
+    const key = a + '|' + b + '|' + pid + '|' + dn + '|' + up;
     if (cache.has(key)) return cache.get(key);
     const P = PERIODS.find((p) => p.id === pid);
     const src = D[P.res];
@@ -86,7 +87,7 @@
       const volA = Math.sqrt(sAA / years), volB = Math.sqrt(sBB / years);
       const r0 = pa[0] / pb[0];
       let inR = 0, maxIL = 0;
-      const lo = 1 - rangePct / 100, hi = 1 + rangePct / 100;
+      const lo = 1 - dn / 100, hi = 1 + up / 100;
       const ratio = new Array(n);
       for (let i = 0; i < n; i++) {
         const k = pa[i] / pb[i] / r0;
@@ -144,7 +145,7 @@
     if (m === 'corr') { g = `linear-gradient(90deg,${rgb(NEG)},${rgb(BASE)},${rgb(POS)})`; l = '−1'; r = '+1'; }
     else { g = `linear-gradient(90deg,${rgb(GOOD)},${rgb(MID)},${rgb(BAD)})`; [l, r] = m === 'ratioVol' ? ['0%', '120%+'] : m === 'il' ? ['0%', '−15%'] : ['100%', '0%']; }
     $('#legend').innerHTML = `<span>${l}</span><span class="bar" style="background:${g}"></span><span>${r}</span>`;
-    const titles = { corr: 'Correlation matrix', ratioVol: 'Ratio volatility (annualized)', il: 'Impermanent loss, full range (%)', inRange: `Time in ±${st.range}% range` };
+    const titles = { corr: 'Correlation matrix', ratioVol: 'Ratio volatility (annualized)', il: 'Impermanent loss, full range (%)', inRange: `Time in ${rangeTxt()} range` };
     $('#matrixTitle').textContent = titles[m] + ' · ' + st.period;
   }
 
@@ -195,7 +196,23 @@
   };
   document.addEventListener('click', (e) => { if (!pop.hidden && !$('#picker').contains(e.target)) pop.hidden = true; });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') pop.hidden = true; });
-  $('#range').oninput = (e) => { st.range = +e.target.value; $('#rangeVal').textContent = st.range; cache.clear(); renderAll(true); };
+  function rangeTxt() { return st.dn === st.up ? `±${st.dn}%` : `−${st.dn}% / +${st.up}%`; }
+  function syncRangeCtl() {
+    $('#rangeVal').textContent = rangeTxt();
+    if (document.activeElement !== $('#rangeDn')) $('#rangeDn').value = st.dn;
+    if (document.activeElement !== $('#rangeUp')) $('#rangeUp').value = st.up;
+    $('#range').value = Math.min(50, Math.max(1, Math.round((st.dn + st.up) / 2)));
+  }
+  const applyRange = () => { cache.clear(); syncRangeCtl(); renderAll(true); };
+  $('#range').oninput = (e) => { st.dn = st.up = +e.target.value; applyRange(); };
+  for (const [id, k] of [['#rangeDn', 'dn'], ['#rangeUp', 'up']]) {
+    $(id).oninput = (e) => {
+      const v = +e.target.value;
+      if (!(v > 0) || v > (k === 'dn' ? 99 : 1000)) return;
+      st[k] = v; applyRange();
+    };
+  }
+  syncRangeCtl();
 
   // ---------- matrix ----------
   function renderMatrix() {
@@ -263,7 +280,7 @@
       kpi('Ratio vol (ann.)', pct(r.ratioVol, 0), vt, vc) +
       kpi('Beta', f2(r.beta), `${a} vol ${pct(r.volA, 0)} · ${b} vol ${pct(r.volB, 0)}`) +
       kpi('IL full range', pct(r.il, 2), `worst in period ${pct(r.maxIL, 2)}`, r.il < -0.02 ? 'bad' : '') +
-      kpi(`In ±${st.range}% range`, pct(r.inRange, 0), 'share of period', r.inRange > 0.8 ? 'good' : r.inRange < 0.5 ? 'bad' : 'warn') +
+      kpi(`In ${rangeTxt()} range`, pct(r.inRange, 0), 'share of period', r.inRange > 0.8 ? 'good' : r.inRange < 0.5 ? 'bad' : 'warn') +
       kpi('Period return', `${sgnPct(r.retA, 1)}`, `${a} · ${b} ${sgnPct(r.retB, 1)}`);
     const labels = r.t.map((t) => fmtT(t, r.step));
     const pa = r.pa.map((x) => (x / r.pa[0]) * 100), pb = r.pb.map((x) => (x / r.pb[0]) * 100);
@@ -282,13 +299,13 @@
       ] },
       options: common,
     });
-    const lo = 1 - st.range / 100, hi = 1 + st.range / 100;
+    const lo = 1 - st.dn / 100, hi = 1 + st.up / 100;
     if (ratioChart) ratioChart.destroy();
     ratioChart = new Chart($('#ratioChart'), {
       type: 'line',
       data: { labels, datasets: [
-        { label: `Range +${st.range}%`, data: labels.map(() => hi), borderColor: 'rgba(62,207,142,.6)', borderDash: [4, 4], borderWidth: 1, fill: false },
-        { label: `Range −${st.range}%`, data: labels.map(() => lo), borderColor: 'rgba(62,207,142,.6)', borderDash: [4, 4], borderWidth: 1, fill: '-1', backgroundColor: 'rgba(62,207,142,.07)' },
+        { label: `Range +${st.up}%`, data: labels.map(() => hi), borderColor: 'rgba(62,207,142,.6)', borderDash: [4, 4], borderWidth: 1, fill: false },
+        { label: `Range −${st.dn}%`, data: labels.map(() => lo), borderColor: 'rgba(62,207,142,.6)', borderDash: [4, 4], borderWidth: 1, fill: '-1', backgroundColor: 'rgba(62,207,142,.07)' },
         { label: `${a}/${b} price ratio (start = 1)`, data: r.ratio, borderColor: '#e7eaf0' },
       ] },
       options: { ...common, plugins: { ...common.plugins, legend: { labels: { boxWidth: 10, boxHeight: 10, filter: (i) => i.datasetIndex !== 0 } } } },
@@ -354,7 +371,7 @@
       </tr>`;
     }).join('') || `<tr><td colspan="12" class="muted">No pairs match these filters.</td></tr>`;
     document.querySelectorAll('#rank th[data-k]').forEach((th) => { th.classList.toggle('sorted', th.dataset.k === k); th.classList.toggle('desc', th.dataset.k === k && st.sortDesc); });
-    $('#rankNote').textContent = `${rows.length} pairs · ${st.period} · range ±${st.range}%${rows.length > 300 ? ' · showing first 300' : ''}${{ratioVol:'Sorted by lowest ratio vol = least IL',apr:'Sorted by fee APR'}[k] && !(k==='ratioVol'&&st.sortDesc) && !(k==='apr'&&!st.sortDesc) ? ' · '+{ratioVol:'Sorted by lowest ratio vol = least IL',apr:'Sorted by highest fee APR'}[k] : ''}. Tap a row for detail.`;
+    $('#rankNote').textContent = `${rows.length} pairs · ${st.period} · range ${rangeTxt()}${rows.length > 300 ? ' · showing first 300' : ''}${{ratioVol:'Sorted by lowest ratio vol = least IL',apr:'Sorted by fee APR'}[k] && !(k==='ratioVol'&&st.sortDesc) && !(k==='apr'&&!st.sortDesc) ? ' · '+{ratioVol:'Sorted by lowest ratio vol = least IL',apr:'Sorted by highest fee APR'}[k] : ''}. Tap a row for detail.`;
   }
   document.querySelectorAll('#rank th[data-k]').forEach((th) => th.onclick = () => {
     const k = th.dataset.k;

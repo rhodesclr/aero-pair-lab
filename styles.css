@@ -195,3 +195,10 @@ td a{color:var(--accent);text-decoration:none;font-size:var(--text-xs)}
 }
 .kpi.picked{outline:1px solid var(--accent);outline-offset:-1px}
 #simNow{grid-template-columns:repeat(3,minmax(0,1fr))}
+.pct-pair{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-2)}
+.pct-pair label{display:flex;flex-direction:column;gap:3px;min-width:0}
+.pct-pair input,.pct-in input{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:var(--space-1) var(--space-2);font-size:var(--text-sm);font-family:var(--mono);width:100%;min-width:0;color:var(--text)}
+.pct-in{display:flex;align-items:center;gap:6px;margin-top:4px}
+.pct-in input{width:76px;flex:none}
+.pct-in{flex-wrap:wrap;min-width:0}
+.pct-in input{width:64px}

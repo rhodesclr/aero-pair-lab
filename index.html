@@ -58,8 +58,12 @@
         <div class="seg" id="metrics"></div>
       </div>
       <div class="ctl">
-        <label class="lbl" for="range">LP range ±<span id="rangeVal">10</span>%</label>
-        <input type="range" id="range" min="1" max="50" value="10">
+        <label class="lbl" for="range">LP range <span id="rangeVal">±10%</span></label>
+        <input type="range" id="range" min="1" max="50" value="10" aria-label="Symmetric range">
+        <div class="pct-pair">
+          <label><span class="muted small">Below −%</span><input id="rangeDn" type="number" min="0.1" max="99" step="0.5" value="10" inputmode="decimal"></label>
+          <label><span class="muted small">Above +%</span><input id="rangeUp" type="number" min="0.1" max="1000" step="0.5" value="10" inputmode="decimal"></label>
+        </div>
       </div>
     </div>
   </section>
@@ -130,7 +134,7 @@
       <li><b>Ratio vol</b> is the annualized volatility of price A ÷ price B — the number that actually drives impermanent loss and how often a concentrated (Slipstream) range goes out of range. Lower is safer. Correlation alone can mislead: two assets with 0.9 correlation but very different volatility (e.g. MSTRc vs BTC) still drift apart.</li>
       <li><b>Correlation</b> uses log returns over the period (hourly bars for 7D–90D, daily for 180D–1Y). <b>Beta</b> is how much A moves per 1% move in B.</li>
       <li><b>IL full range</b> is the realized impermanent loss of a v2-style (full-range) position opened at the start of the period vs simply holding, before fees and emissions. Concentrated ranges amplify it.</li>
-      <li><b>In range</b> is the share of the period the A/B price stayed within ±your range of the starting price.</li>
+      <li><b>In range</b> is the share of the period the A/B price stayed within your range (the −% / +% you set) of the starting price.</li>
       <li><b>Vol/TVL</b> is 24h volume ÷ pool liquidity.</li>
       <li><b>AERO APR</b> = the pool's AERO reward stream (read from Aero's LP Sugar contract on Base, the same contract the Aero app uses) × AERO price × 365 ÷ the value of liquidity staked in the gauge, using the Aero app's formula. It's for the pair's biggest pool and refreshes hourly. You earn this <b>instead of</b> trading fees when you stake.</li>
       <li><b>Fee APR</b> = last 24h volume × the pool's swap fee (read on-chain) × 365 ÷ pool TVL, combined across the pair's pools. It's a one-day snapshot, so it jumps around. On Aero, trading fees go to <b>unstaked</b> LPs; if you stake in the gauge you give up fees and earn AERO emissions instead (not shown). For Slipstream (concentrated) pools this is the pool-wide average — a tight in-range position earns more, an out-of-range one earns nothing.</li>
@@ -168,8 +172,8 @@
       <div class="ctl">
         <span class="lbl">Price range <span class="muted" id="simUnit"></span></span>
         <div class="sim-range">
-          <label><span class="muted small">Min price</span><input id="simMin" type="text" inputmode="decimal"><span class="muted small" id="simMinPct"></span></label>
-          <label><span class="muted small">Max price</span><input id="simMax" type="text" inputmode="decimal"><span class="muted small" id="simMaxPct"></span></label>
+          <label><span class="muted small">Min price</span><input id="simMin" type="text" inputmode="decimal"><span class="pct-in"><input id="simDnPct" type="number" step="0.5" inputmode="decimal" aria-label="Percent below current price"><span class="muted small">% below</span></span></label>
+          <label><span class="muted small">Max price</span><input id="simMax" type="text" inputmode="decimal"><span class="pct-in"><input id="simUpPct" type="number" step="0.5" inputmode="decimal" aria-label="Percent above current price"><span class="muted small">% above</span></span></label>
         </div>
         <div class="seg presets" id="simPresets"></div>
         <p class="hint" id="simBasicNote" hidden>Basic (v2-style) pools are always full range.</p>
