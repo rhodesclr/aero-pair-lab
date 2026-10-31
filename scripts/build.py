@@ -15,7 +15,7 @@ def get(u):
         except Exception as e:
             last=e; time.sleep(3*(k+1))
     raise last
-STOCKS='NVDAc GOOGLc MSTRc SNDKc MUc SPCXc AAPLc METAc AMZNc SKHYc NOKc PLTRc TSLAc ARMc SAPc INFYc BILIc BIDUc SONYc PDDc ULc SANc VALEc BUDc SEc NIOc WRDc MSFTc HSAIc LIc NVOc NFLXc AVGOc MRNAc CRWVc RDDTc WENc HIMSc AMDc ORCLc LLYc BEc GMEc TTWOc MRVLc CBRSc RKLBc'.split()
+STOCKS='NVDAc GOOGLc MSTRc SNDKc MUc SPCXc AAPLc METAc AMZNc SKHYc NOKc PLTRc TSLAc ARMc SAPc INFYc BILIc BIDUc SONYc PDDc ULc SANc VALEc BUDc SEc NIOc WRDc MSFTc HSAIc LIc NVOc NFLXc AVGOc MRNAc CRWVc RDDTc WENc HIMSc AMDc ORCLc LLYc BEc GMEc TTWOc MRVLc CBRSc RKLBc BMNRc'.split()
 cb={x['symbol']:x for x in json.load(open('cb_stocks.json'))}
 spools=json.load(open('aero_stock_pools.json'))
 cp=json.load(open('crypto_pools.json')); CM=cp['meta']; CM.pop('KAITO',None)
