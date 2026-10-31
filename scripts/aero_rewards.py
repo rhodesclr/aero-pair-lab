@@ -6,6 +6,9 @@ import json, urllib.request
 from pool_fees import call
 
 LP_SUGAR = '0x082965f28c1aF8c7e236F8A8909596B01D8C6e72'
+# Aero LP Sugar per chain (from the Aero app's config)
+SUGARS = {'base': LP_SUGAR, 'optimism': '0x81538A32F7C98796132dE4F700EAbDbE773BE5BE', 'robinhood': '0x548245396B5a74c416590580434b9E4bc4CFe3b6'}
+CHAIN_ID = {'base': 8453, 'optimism': 10, 'robinhood': 4663}
 NEW_AERO = '0x3f5bf3edac59d650d8fdf9657a71f2f904a3a4ee'
 WIDTH_BPS = {1: 10, 10: 50, 50: 300, 100: 500, 150: 750, 200: 1000, 250: 1250}
 Q96 = 2 ** 96
@@ -16,8 +19,8 @@ def _int(w, signed=False):
     v = int(w, 16)
     return v - (1 << 256) if signed and v >= 1 << 255 else v
 
-def sugar(addr, window=86400):
-    r = call(LP_SUGAR, '0xa773f925' + addr[2:].lower().rjust(64, '0') + hex(window)[2:].rjust(64, '0'))
+def sugar(addr, window=86400, chain='base'):
+    r = call(SUGARS[chain], '0xa773f925' + addr[2:].lower().rjust(64, '0') + hex(window)[2:].rjust(64, '0'), chain)
     if not r or r == 'ERR' or len(r) < 66 * 40: return None
     w = [r[2 + i * 64: 2 + (i + 1) * 64] for i in range((len(r) - 2) // 64)]
     b = _int(w[0]) // 32  # offset of the tuple
@@ -26,12 +29,12 @@ def sugar(addr, window=86400):
     return dict(liquidity=f(3), type=f(4, True), tick=f(5, True), sqrt=f(6), t0=a(7), staked0=f(9), t1=a(10), staked1=f(12),
                 gauge=a(13), gaugeL=f(14), alive=bool(f(15)), emissions=f(18), etoken=a(19), poolFee=f(21), unstakedFee=f(22))
 
-def decimals(t):
-    t = t.lower()
-    if t not in _dec:
-        r = call(t, '0x313ce567')
-        _dec[t] = int(r, 16) if r and r != 'ERR' else 18
-    return _dec[t]
+def decimals(t, chain='base'):
+    k = (chain, t.lower())
+    if k not in _dec:
+        r = call(t, '0x313ce567', chain)
+        _dec[k] = int(r, 16) if r and r != 'ERR' else 18
+    return _dec[k]
 
 def aero_usd():
     try:
@@ -42,9 +45,9 @@ def aero_usd():
     except Exception:
         return None
 
-def pool_rewards(addr, usd_by_token, aero):
+def pool_rewards(addr, usd_by_token, aero, chain='base'):
     """usd_by_token: {lowercase token address: USD price}. Returns dict or None."""
-    s = sugar(addr)
+    s = sugar(addr, chain=chain)
     if not s: return None
     out = dict(gauge=s['alive'] and s['gauge'] != '0x' + '0' * 40, ufee=s['unstakedFee'] / 1e6)
     if s['liquidity'] > 0 and s['type'] > 0: out['staked'] = round(s['gaugeL'] / s['liquidity'], 4)
@@ -57,10 +60,10 @@ def pool_rewards(addr, usd_by_token, aero):
     if s['type'] > 0:
         if u1 is None: return out
         c = WIDTH_BPS.get(s['type'], 300)
-        val = s['gaugeL'] * s['sqrt'] * c / (Q96 * 10000) / 10 ** decimals(s['t1']) * u1
+        val = s['gaugeL'] * s['sqrt'] * c / (Q96 * 10000) / 10 ** decimals(s['t1'], chain) * u1
     else:
         if u0 is None or u1 is None: return out
-        val = s['staked0'] / 10 ** decimals(s['t0']) * u0 + s['staked1'] / 10 ** decimals(s['t1']) * u1
+        val = s['staked0'] / 10 ** decimals(s['t0'], chain) * u0 + s['staked1'] / 10 ** decimals(s['t1'], chain) * u1
     out['rapr'] = round(em * aero * YEAR / val, 4) if val > 0 else None
     return out
 
@@ -87,11 +90,11 @@ def _decode_lps(r):
     return out
 
 SEL_ALL = '0x814b0f0c'
-def sugar_all(page=25):
-    cnt = call(LP_SUGAR, '0x06661abd')  # count()
+def sugar_all(page=25, chain='base'):
+    cnt = call(SUGARS[chain], '0x06661abd', chain)  # count()
     n = int(cnt, 16) if cnt and cnt != 'ERR' else 0
     res = []
     for off in range(0, n, page):
-        r = call(LP_SUGAR, SEL_ALL + hex(page)[2:].rjust(64, '0') + hex(off)[2:].rjust(64, '0') + hex(86400)[2:].rjust(64, '0') + '0'.rjust(64, '0'))
+        r = call(SUGARS[chain], SEL_ALL + hex(page)[2:].rjust(64, '0') + hex(off)[2:].rjust(64, '0') + hex(86400)[2:].rjust(64, '0') + '0'.rjust(64, '0'), chain)
         if r and r != 'ERR': res += _decode_lps(r)
     return res

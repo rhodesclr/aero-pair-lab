@@ -1,11 +1,22 @@
-// LP Simulator: live pool state + up to 1 year of price history + draggable range + backtest + range optimizer.
+// LP Simulators (Aero and Uniswap, on Base / OP Mainnet / Robinhood Chain): live pool state + up to 1 year of price history + draggable range + backtest + range optimizer.
 (function () {
   const $ = (s) => document.querySelector(s);
   const LC = window.LightweightCharts;
   let D, A;
   let pool = null, chainSt = null, ser = null, avg7 = null, aeroPx = null;
   const WIDTH_BPS = { 1: 10, 10: 50, 50: 300, 100: 500, 150: 750, 200: 1000, 250: 1250 };
-  const S = { addr: null, dep: 1000, lo: null, hi: null, full: false, period: '90D', mode: 'fixed', earn: 'fees', aeroSrc: 'live', aeroApr: 0, volMode: 'live', customVol: null, feeShare: 100, inv: false };
+  const S = { addr: null, dep: 1000, lo: null, hi: null, full: false, period: '90D', mode: 'fixed', earn: 'fees', aeroSrc: 'live', aeroApr: 0, volMode: 'live', customVol: null, feeShare: 100, inv: false, chain: 'all' };
+  // which simulator is showing: 'aero' (Aero + old Aerodrome pools) or 'uni' (Uniswap v2/v3/v4)
+  let mode = 'aero';
+  const modeState = { aero: { addr: null, earn: 'fees', chain: 'all' }, uni: { addr: null, earn: 'fees', chain: 'all' } };
+  const CHAINS = { base: 'Base', optimism: 'OP Mainnet', robinhood: 'Robinhood Chain' };
+  const EXPL = { base: ['BaseScan', 'https://basescan.org/address/'], optimism: ['OP Etherscan', 'https://optimistic.etherscan.io/address/'], robinhood: ['Blockscout', 'https://robinhoodchain.blockscout.com/address/'] };
+  const chainOf = (p) => (p && p.chain) || 'base';
+  const isUni = (p) => !!(p && p.venue === 'uniswap');
+  const inMode = (p) => (mode === 'uni' ? isUni(p) : !isUni(p));
+  const venueName = (p) => (isUni(p) ? 'Uniswap' : p.venue === 'legacy' ? 'Old Aerodrome' : 'Aero');
+  const venueTag = (p) => `<span class="venue ${isUni(p) ? 'uni' : p.venue === 'legacy' ? 'legacy' : 'aero'}">${venueName(p)}</span>`;
+  const chainTag = (p) => `<span class="chain ${chainOf(p)}">${CHAINS[chainOf(p)]}</span>`;
   const PERIODS = { '7D': ['hourly', 168], '30D': ['hourly', 720], '90D': ['hourly', 2160], '180D': ['daily', 180], '1Y': ['daily', 365] };
   const WIDTHS = [0.01, 0.02, 0.03, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.5, 'full'];
 
@@ -24,7 +35,11 @@
   const pct = (x, d = 1) => (x == null || isNaN(x) ? '—' : (x * 100).toFixed(d) + '%');
   const spct = (x, d = 1) => (x == null || isNaN(x) ? '—' : (x > 0 ? '+' : x < 0 ? '−' : '') + Math.abs(x * 100).toFixed(d) + '%');
   const amt = (x) => (x == null ? '—' : x === 0 ? '0' : Math.abs(x) >= 1000 ? x.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(+x.toPrecision(5)));
-  const kindFmt = (k) => (!k ? 'Pool' : k.startsWith('CL') ? 'Slipstream ' + k : k === 'stable' ? 'Basic stable' : 'Basic volatile');
+  const kindFmt = (p) => {
+    const k = p && p.kind;
+    if (isUni(p)) return `Uniswap ${p.ver || ''}${k && k.startsWith('CL') && p.ts ? ' · tick ' + p.ts : ''}`;
+    return !k ? 'Pool' : k.startsWith('CL') ? 'Slipstream ' + k : k === 'stable' ? 'Basic stable' : 'Basic volatile';
+  };
   const feeFmt = (f) => (f == null ? '—' : +(f * 100).toFixed(4) + '%');
   const cls = (x) => (x == null ? '' : x > 0 ? 'good' : x < 0 ? 'bad' : '');
   const isCL = (p) => !!(p && p.kind && p.kind.startsWith('CL'));
@@ -303,18 +318,29 @@
   }
 
   // ---------- UI ----------
+  function modePools() {
+    const legacy = $('#simLegacy').checked;
+    return D.pools.filter((p) => inMode(p) && (mode === 'uni' || legacy || p.venue !== 'legacy'));
+  }
   function poolOptions() {
     const q = ($('#simSearch').value || '').trim().toLowerCase();
-    const legacy = $('#simLegacy').checked;
-    const list = D.pools.filter((p) => (legacy || p.venue !== 'legacy') && (!q || (p.a + '/' + p.b).toLowerCase().includes(q) || (p.b + '/' + p.a).toLowerCase().includes(q)))
-      .slice().sort((x, y) => (y.liq || 0) - (x.liq || 0));
-    const opt = (p) => `<option value="${p.addr}" ${pool && p.addr === pool.addr ? 'selected' : ''}>${p.a}/${p.b} · ${kindFmt(p.kind)} · ${feeFmt(p.fee)} · TVL ${usdK(p.liq)}${p.venue === 'legacy' ? ' · old Aerodrome' : ''}</option>`;
-    const aero = list.filter((p) => p.venue !== 'legacy'), old = list.filter((p) => p.venue === 'legacy');
+    const match = (p) => !q || [p.a + '/' + p.b, p.b + '/' + p.a, (p.sa || '') + '/' + (p.sb || ''), (p.sb || '') + '/' + (p.sa || '')].some((x) => x.toLowerCase().includes(q));
+    const list = modePools().filter((p) => (S.chain === 'all' || chainOf(p) === S.chain) && match(p)).slice().sort((x, y) => (y.liq || 0) - (x.liq || 0));
+    const sym = (p) => (isUni(p) && chainOf(p) === 'robinhood' && p.sa && p.sa !== p.a ? ` (${p.sa}/${p.sb})` : '');
+    const opt = (p) => `<option value="${p.addr}" ${pool && p.addr === pool.addr ? 'selected' : ''}>${p.a}/${p.b}${sym(p)} · ${kindFmt(p)} · ${feeFmt(p.fee)} · TVL ${usdK(p.liq)}</option>`;
     let h = '';
-    if (aero.length) h += `<optgroup label="Aero pools">${aero.map(opt).join('')}</optgroup>`;
-    if (old.length) h += `<optgroup label="Old Aerodrome pools">${old.map(opt).join('')}</optgroup>`;
+    for (const c of Object.keys(CHAINS)) {
+      const g = list.filter((p) => chainOf(p) === c && p.venue !== 'legacy');
+      if (g.length) h += `<optgroup label="${mode === 'uni' ? 'Uniswap' : 'Aero'} · ${CHAINS[c]}">${g.map(opt).join('')}</optgroup>`;
+    }
+    const old = list.filter((p) => p.venue === 'legacy');
+    if (old.length) h += `<optgroup label="Old Aerodrome pools · Base">${old.map(opt).join('')}</optgroup>`;
     if (pool && !list.includes(pool)) h = opt(pool) + h;
     $('#simPool').innerHTML = h || '<option>No pools match</option>';
+  }
+  function defaultPool() {
+    const ps = modePools().filter((p) => p.venue !== 'legacy' && (S.chain === 'all' || chainOf(p) === S.chain));
+    return (ps.filter(isCL).sort((x, y) => y.liq - x.liq)[0] || ps.sort((x, y) => y.liq - x.liq)[0])?.addr;
   }
   function seg(el, items, cur, onPick) {
     el.innerHTML = items.map(([id, label]) => `<button data-id="${id}" class="${id === cur ? 'on' : ''}">${label}</button>`).join('');
@@ -324,6 +350,11 @@
     seg($('#simPeriods'), Object.keys(PERIODS).map((k) => [k, k]), S.period, (id) => { S.period = id; renderSegs(); buildSeries(); setChartData(); compute(); });
     seg($('#simMode'), [['fixed', 'My exact prices'], ['relative', 'Same % width from start']], S.mode, (id) => { S.mode = id; renderSegs(); compute(); });
     seg($('#simEarn'), [['fees', 'Trading fees'], ['aero', 'AERO rewards']], S.earn, (id) => { S.earn = id; renderSegs(); compute(); });
+    const cnt = (c) => modePools().filter((p) => p.venue !== 'legacy' && (c === 'all' || chainOf(p) === c)).length;
+    seg($('#simChains'), [['all', `All chains ${cnt('all')}`], ...Object.entries(CHAINS).map(([c, n]) => [c, `${n} ${cnt(c)}`])], S.chain, (id) => {
+      S.chain = id; renderSegs(); poolOptions();
+      if (pool && id !== 'all' && chainOf(pool) !== id) { const a = defaultPool(); if (a) selectPool(a); }
+    });
     const v7 = avg7 ? `7-day avg ${usdK(avg7.avg)}` : '7-day avg';
     seg($('#simVolMode'), [['live', `Live 24h ${pool ? usdK(pool.vol) : ''}`], ['avg7', v7], ['custom', 'Custom']], S.volMode, (id) => {
       S.volMode = id;
@@ -384,20 +415,26 @@
     $('#simLive').innerHTML =
       k(priceLabel(), fmtP(disp(P)), `${pairLabel()}${pool.chg24 == null ? '' : ' · 24h ' + spct(pool.chg24 / 100)}`) +
       (() => {
+        if (isUni(pool)) return k('Protocol fee', pool.ufee ? pct(pool.ufee, 1) : 'Off', pool.ufee ? 'of swap fees goes to Uniswap, already taken off' : 'LPs keep 100% of swap fees');
         if (pool.venue === 'legacy') return k('AERO APR · your range', '0%', 'old Aerodrome gauges stopped');
         const ref = poolAeroApr();
         const refTxt = ref == null ? '' : isCL(pool) ? `Aero app shows ${pct(ref, 1)} (its ±${((WIDTH_BPS[pool.kind?.slice(2)] ?? 300) / 100).toFixed(2).replace(/\.?0+$/, '')}% reference range)` : `Aero app shows ${pct(ref, 1)}`;
         if (!n) return k('AERO APR · your range', '—', refTxt);
         return k('AERO APR · your range', n.inR ? pct(n.aeroAprNow, 1) : '0%', n.inR ? refTxt : 'out of range · ' + refTxt, n.inR && n.aeroAprNow > 0 ? 'good' : n.inR ? '' : 'bad');
       })() +
-      k('Pool TVL', usdK(pool.liq), `${pool.venue === 'legacy' ? 'Old Aerodrome' : 'Aero'} · ${kindFmt(pool.kind)}${tvlNote}`) +
+      k('Pool TVL', usdK(pool.liq), `${venueName(pool)} · ${CHAINS[chainOf(pool)]} · ${kindFmt(pool)}${tvlNote}`) +
       k('24h volume', usdK(pool.vol), pool.vol1 != null ? `last 1h ${usdK(pool.vol1)}` : '') +
-      k('Fee now', feeFmt(fee), isCL(pool) ? 'dynamic, read on-chain' : 'pool fee') +
-      k('Fee APR · your range', !n ? '—' : n.inR ? pct(n.feeApr, 1) : '0%', `unstaked · pool average ${pool.liq ? pct((pool.vol * (fee || 0) * 365) / pool.liq, 1) : '—'}`, n && !n.inR ? 'bad' : '');
+      k('Fee now', feeFmt(fee), isUni(pool) ? 'fee tier, read on-chain' : isCL(pool) ? 'dynamic, read on-chain' : 'pool fee') +
+      k('Fee APR · your range', !n ? '—' : n.inR ? pct(n.feeApr, 1) : '0%', `${isUni(pool) ? 'after protocol fee' : 'unstaked'} · pool average ${pool.liq ? pct((pool.vol * (fee || 0) * (isUni(pool) ? 1 - (pool.ufee || 0) : 1) * 365) / pool.liq, 1) : '—'}`, n && !n.inR ? 'bad' : '');
     $('#simLiveTxt').textContent = fresh ? `Live · ${age}s ago` : 'Connecting…';
     $('#simLiveDot').className = 'live-dot ' + (fresh ? 'on' : 'off');
-    $('#simTitle').textContent = `${pool.a}/${pool.b}`;
-    $('#simLinks').innerHTML = `<a href="${pool.url}" target="_blank" rel="noopener">${pool.src === 'sugar' ? 'Aero app' : 'DEX Screener'} ↗</a> · <a href="https://basescan.org/address/${pool.addr}" target="_blank" rel="noopener">BaseScan ↗</a>`;
+    $('#simTitle').innerHTML = `${pool.a}/${pool.b} ${venueTag(pool)} ${chainTag(pool)}`;
+    const L = [];
+    const a = (href, t) => L.push(`<a href="${href}" target="_blank" rel="noopener">${t} ↗</a>`);
+    if (isUni(pool)) { if (pool.app) a(pool.app, 'Uniswap app'); a(pool.url, 'DEX Screener'); }
+    else { a(pool.url, pool.src === 'sugar' ? 'Aero app' : 'DEX Screener'); if (pool.ds) a(pool.ds, 'DEX Screener'); }
+    if (pool.addr.length === 42) a(EXPL[chainOf(pool)][1] + pool.addr, EXPL[chainOf(pool)][0]);
+    $('#simLinks').innerHTML = L.join(' · ');
   }
   let lightPending = false;
   function lightCompute() { if (lightPending) return; lightPending = true; requestAnimationFrame(() => { lightPending = false; renderNow(); }); }
@@ -409,13 +446,13 @@
     const lu = liveUsd();
     const k = (l, v, s = '', c = '') => `<div class="kpi"><div class="k">${l}</div><div class="v ${c}">${v}</div><div class="s">${s}</div></div>`;
     if (!n) { $('#simNow').innerHTML = '<div class="nopool">Waiting for the live pool price…</div>'; return; }
-    const warn = isCL(pool) && !(o.Lpool > 0) ? ' · on-chain liquidity unavailable, rough estimate' : '';
-    const legacy = pool.venue === 'legacy';
+    const warn = isCL(pool) && !(o.Lpool > 0) ? ' · on-chain liquidity unavailable, rough estimate' : isCL(pool) && n.share > 0.05 ? ' · very thin in-range liquidity: your deposit would be most of it, so real fees would likely be far lower' : '';
+    const legacy = pool.venue === 'legacy', uni = isUni(pool);
     const aeroSub = legacy ? 'old Aerodrome gauges stopped' : o.gaugeAlive === false ? 'no active gauge on this pool' : !n.inR ? 'price is outside your range' : o.aeroLive ? `live · AERO ${usd(aeroPx, 4)} · ${pct(n.ash, n.ash < 0.001 ? 3 : 2)} of staked L` : S.aeroSrc === 'live' ? 'waiting for Aero data…' : 'your manual APR';
     const pick = (m) => (S.earn === m ? ' picked' : '');
     $('#simNow').innerHTML =
-      `<div class="kpi${pick('fees')}"><div class="k">Est. fee APR · unstaked</div><div class="v ${n.inR ? (n.feeApr > 0.2 ? 'good' : '') : 'bad'}">${n.inR ? pct(n.feeApr, 1) : '0%'}</div><div class="s">${n.inR ? 'trading fees at current volume' + (o.ufee ? ` · after ${pct(o.ufee, 0)} unstaked fee` : '') + warn : 'price is outside your range'}</div></div>` +
-      `<div class="kpi${pick('aero')}"><div class="k">Est. AERO APR · staked</div><div class="v ${n.inR && n.aeroAprNow > 0 ? 'good' : n.inR ? '' : 'bad'}">${legacy ? '0%' : pct(n.aeroAprNow, 1)}</div><div class="s">${aeroSub}</div></div>` +
+      `<div class="kpi${uni ? '' : pick('fees')}"><div class="k">Est. fee APR${uni ? '' : ' · unstaked'}</div><div class="v ${n.inR ? (n.feeApr > 0.2 ? 'good' : '') : 'bad'}">${n.inR ? pct(n.feeApr, 1) : '0%'}</div><div class="s">${n.inR ? 'trading fees at current volume' + (o.ufee ? ` · after ${pct(o.ufee, uni ? 1 : 0)} ${uni ? 'protocol' : 'unstaked'} fee` : '') + warn : 'price is outside your range'}</div></div>` +
+      (uni ? '' : `<div class="kpi${pick('aero')}"><div class="k">Est. AERO APR · staked</div><div class="v ${n.inR && n.aeroAprNow > 0 ? 'good' : n.inR ? '' : 'bad'}">${legacy ? '0%' : pct(n.aeroAprNow, 1)}</div><div class="s">${aeroSub}</div></div>`) +
       k(`Est. earnings · ${S.earn === 'fees' ? 'fees' : 'AERO'}`, n.inR ? usd(n.daily, 2) + '/day' : '$0/day', n.inR ? usd(n.daily * 30, 0) + '/month' : 'until price re-enters') +
       k('Your share of pool', pct(n.share, n.share < 0.001 ? 3 : 2), isCL(pool) ? 'of in-range liquidity' : 'of pool TVL') +
       k('Capital efficiency', isCL(pool) && !S.full ? '×' + n.eff.toFixed(1) : '×1', 'vs full range') +
@@ -441,11 +478,80 @@
       k('Start split', `${amt(r.x0)} ${pool.a} + ${amt(r.y0)} ${pool.b}`, S.mode === 'relative' ? `range ${fmtP(disp(S.inv ? r.hi : r.lo))}–${fmtP(disp(S.inv ? r.lo : r.hi))} at start` : 'at the start price');
     renderValueChart(r);
     renderOptimizer(o);
+    renderCompare();
     writeHash();
+  }
+
+  // ---------- compare venues: same pair on Aero and Uniswap, every chain ----------
+  const cmpSt = {};
+  const pkey = (p) => chainOf(p) + ':' + p.addr.toLowerCase();
+  function pairPools(p) {
+    const same = D.pools.filter((x) => x.venue !== 'legacy' && ((x.a === p.a && x.b === p.b) || (x.a === p.b && x.b === p.a)));
+    const top = same.sort((x, y) => (y.liq || 0) - (x.liq || 0)).slice(0, 14);
+    if (!top.includes(p)) top.unshift(p);
+    return top;
+  }
+  async function loadCompare() {
+    if (!pool) return;
+    const p0 = pool;
+    await Promise.all(pairPools(p0).map(async (x) => {
+      if (x === p0) return;
+      const c = cmpSt[pkey(x)];
+      if (c && Date.now() - c.ts < 60e3) return;
+      const st = await Live.poolState(x).catch(() => null);
+      if (st) cmpSt[pkey(x)] = { st: { ...st, addr: x.addr }, ts: Date.now() };
+    }));
+    if (p0 === pool) renderCompare();
+  }
+  function evalPool(x) {
+    const sv = { pool, chainSt, ser, avg7, lo: S.lo, hi: S.hi, earn: S.earn, volMode: S.volMode, full: S.full };
+    try {
+      if (x !== sv.pool) {
+        const flip = x.a !== sv.pool.a;
+        pool = x; chainSt = cmpSt[pkey(x)]?.st || null; avg7 = null;
+        if (S.volMode === 'custom') S.volMode = 'live';
+        if (flip) { S.lo = sv.hi > 0 && isFinite(sv.hi) ? 1 / sv.hi : 0; S.hi = sv.lo > 0 ? 1 / sv.lo : Infinity; }
+        buildSeries();
+      }
+      const cl = isCL(x);
+      const lo = cl && !S.full ? S.lo : 0, hi = cl && !S.full ? S.hi : Infinity;
+      S.earn = 'fees';
+      const of = params();
+      const out = { x, cl, nf: nowEst(lo, hi, of), bf: backtest(lo, hi, of, false), live: !!chainSt };
+      out.thin = cl && out.nf && out.nf.share > 0.05;
+      if (x.venue === 'aero') { S.earn = 'aero'; const oa = params(); out.na = nowEst(lo, hi, oa); out.ba = backtest(lo, hi, oa, false); }
+      return out;
+    } catch (e) { return { x, err: true }; }
+    finally { pool = sv.pool; chainSt = sv.chainSt; ser = sv.ser; avg7 = sv.avg7; S.lo = sv.lo; S.hi = sv.hi; S.earn = sv.earn; S.volMode = sv.volMode; }
+  }
+  function renderCompare() {
+    const tb = $('#simCmp tbody');
+    if (!pool || !ser || !tb) return;
+    const ps = pairPools(pool);
+    $('#simCmpTitle').textContent = `Compare venues · ${pool.a}/${pool.b}`;
+    if (ps.length < 2) { tb.innerHTML = `<tr><td colspan="8" class="muted">${pool.a}/${pool.b} only has this one pool across Aero and Uniswap on Base, OP Mainnet and Robinhood Chain.</td></tr>`; return; }
+    const rows = ps.map(evalPool);
+    const score = (r) => Math.max(r.bf ? r.bf.net : -Infinity, r.ba ? r.ba.net : -Infinity);
+    const best = rows.filter((r) => !r.err && !r.thin).reduce((b, r) => (score(r) > (b ? score(b) : -Infinity) ? r : b), null);
+    const ap = (n, key) => (!n ? '—' : n.inR ? pct(n[key], 1) : '<span class="bad">0% · out</span>');
+    tb.innerHTML = rows.map((r) => {
+      const x = r.x, cur = x === pool;
+      const sym = isUni(x) && x.sa && x.sa !== x.a ? ` <span class="muted">${x.sa}/${x.sb}</span>` : '';
+      return `<tr class="${cur ? 'cur' : ''}">
+        <td>${venueTag(x)} ${chainTag(x)}</td>
+        <td>${kindFmt(x)} · ${feeFmt(x.fee)}${sym}${r.cl ? '' : ' <span class="muted">full range</span>'}</td>
+        <td class="num">${usdK(x.liq)}</td>
+        <td class="num">${usdK(x.vol)}</td>
+        <td class="num">${r.err ? '—' : ap(r.nf, 'feeApr')}${r.thin ? '<br><span class="warn small" title="Your deposit would be most of the in-range liquidity, so this estimate is unrealistic">thin liquidity</span>' : ''}</td>
+        <td class="num">${x.venue === 'aero' && !r.err ? ap(r.na, 'aeroAprNow') : '<span class="muted">n/a</span>'}</td>
+        <td class="num">${r.bf ? `<span class="${cls(r.bf.net)}">${usd(r.bf.net, 0)}</span>${r.ba ? ` <span class="muted small">fees</span><br><span class="${cls(r.ba.net)}">${usd(r.ba.net, 0)}</span> <span class="muted small">AERO</span>` : ''}` : '—'}${r === best ? ' <span class="venue aero">Best</span>' : ''}</td>
+        <td>${cur ? '<span class="muted small">Viewing</span>' : `<button class="btn small" data-cmp="${x.addr}">Simulate</button>`}</td></tr>`;
+    }).join('');
+    $('#simCmpSub').textContent = `your ${S.full ? 'full' : 'price'} range, ${usd(S.dep)} deposit and ${S.period} backtest applied to each pool${rows.some((r) => !r.live && r.x !== pool) ? ' · loading live pool data…' : ''}`;
   }
   function renderOptimizer(o) {
     const tb = $('#simOpt tbody');
-    if (!isCL(pool)) { tb.innerHTML = `<tr><td colspan="7" class="muted">Basic pools are always full range, so there's no range to optimize. Pick a Slipstream pool to compare ranges.</td></tr>`; return; }
+    if (!isCL(pool)) { tb.innerHTML = `<tr><td colspan="7" class="muted">${isUni(pool) ? 'Uniswap v2 pools are always full range, so there\'s no range to optimize. Pick a v3 or v4 pool to compare ranges.' : 'Basic pools are always full range, so there\'s no range to optimize. Pick a Slipstream pool to compare ranges.'}</td></tr>`; return; }
     const Pn = livePrice() || ser.P[ser.P.length - 1];
     const rows = WIDTHS.map((w) => {
       const lo = w === 'full' ? 0 : Pn * (1 - w), hi = w === 'full' ? Infinity : Pn * (1 + w);
@@ -463,13 +569,14 @@
       <td class="num">${x.n && x.n.inR ? pct(x.n.apr, 0) : '0%'}</td></tr>`).join('');
   }
   function writeHash() {
-    if (!pool || location.hash.indexOf('#sim') !== 0) return;
+    const tag = mode === 'uni' ? '#uni' : '#sim';
+    if (!pool || location.hash.indexOf(tag) !== 0) return;
     const q = new URLSearchParams({ pool: pool.addr, d: S.dep, p: S.period });
     if (!S.full) { q.set('lo', +S.lo.toPrecision(8)); q.set('hi', +S.hi.toPrecision(8)); } else q.set('full', 1);
     if (S.inv) q.set('inv', 1);
     if (S.mode !== 'fixed') q.set('m', S.mode);
     if (S.earn !== 'fees') q.set('e', S.earn);
-    history.replaceState(null, '', '#sim?' + q.toString());
+    history.replaceState(null, '', tag + '?' + q.toString());
   }
 
   async function refreshChain() {
@@ -482,7 +589,7 @@
   async function selectPool(addr, keep) {
     const p = D.pools.find((x) => x.addr.toLowerCase() === String(addr).toLowerCase());
     if (!p) return;
-    pool = p; chainSt = null; avg7 = null; S.addr = p.addr;
+    pool = p; chainSt = null; avg7 = null; S.addr = p.addr; modeState[mode].addr = p.addr;
     poolOptions();
     buildSeries();
     if (!keep) { if (isCL(p)) applyWidth(0.1); else applyWidth('full'); }
@@ -494,7 +601,8 @@
     buildSeries(); setChartData();
     if (!keep && isCL(p)) applyWidth(0.1);
     compute();
-    Live.avgVolume7d(p.addr).then((v) => { if (p === pool) { avg7 = v; renderSegs(); if (S.volMode === 'avg7') compute(); } });
+    loadCompare();
+    Live.avgVolume7d(p.addr, chainOf(p)).then((v) => { if (p === pool) { avg7 = v; renderSegs(); if (S.volMode === 'avg7') compute(); } });
   }
 
   // ---------- wiring ----------
@@ -525,9 +633,11 @@
     $('#simAero').oninput = (e) => { S.aeroApr = +e.target.value || 0; compute(); };
     $('#simCustomVol').oninput = (e) => { S.customVol = +e.target.value || 0; compute(); };
     $('#simFeeShare').oninput = (e) => { const v = +e.target.value; if (v >= 0 && v <= 100) { S.feeShare = v; compute(); } };
+    $('#simCmp tbody').onclick = (e) => { const b = e.target.closest('button[data-cmp]'); if (b) window.SimOpen(b.dataset.cmp); };
     $('#simOpt tbody').onclick = (e) => { const tr = e.target.closest('tr[data-w]'); if (!tr) return; applyWidth(tr.dataset.w === 'full' ? 'full' : +tr.dataset.w); compute(); };
     Live.onUpdate((w) => { if (!pool || $('#view-sim').hidden) return; if (w === 'pools') { renderLive(); pushLivePoint(); renderNow(); poolOptions(); } else renderLive(); });
     setInterval(() => { if (pool && !$('#view-sim').hidden && !document.hidden) refreshChain(); }, 15e3);
+    setInterval(() => { if (pool && !$('#view-sim').hidden && !document.hidden) loadCompare(); }, 60e3);
     // initial pool: from hash, else the biggest Aero Slipstream pool
     const q = new URLSearchParams((location.hash.split('?')[1] || ''));
     if (q.get('d')) S.dep = +q.get('d') || 1000;
@@ -537,7 +647,10 @@
     if (q.get('e') === 'aero') S.earn = 'aero';
     $('#simDep').value = S.dep;
     $('#simFeeShare').value = S.feeShare;
-    const start = q.get('pool') || D.pools.filter((p) => p.venue !== 'legacy' && isCL(p)).sort((x, y) => y.liq - x.liq)[0]?.addr;
+    applyModeUI();
+    const hp = q.get('pool') && D.pools.find((p) => p.addr.toLowerCase() === q.get('pool').toLowerCase());
+    if (hp && !inMode(hp)) q.delete('pool');
+    const start = q.get('pool') || defaultPool();
     const lo = +q.get('lo'), hi = +q.get('hi');
     if (q.get('pool') && (q.get('full') || (lo > 0 && hi > lo))) {
       if (q.get('full')) { S.full = true; S.lo = 0; S.hi = Infinity; } else { S.full = false; S.lo = lo; S.hi = hi; }
@@ -546,21 +659,49 @@
   }
 
   // ---------- views ----------
+  function applyModeUI() {
+    const uni = mode === 'uni';
+    $('#simLegacyWrap').hidden = uni;
+    $('#simEarnCtl').hidden = uni;
+    $('#simFeeNote').textContent = uni ? "Uniswap's protocol fee (where it's switched on) is already taken off automatically. Lower this only to stress-test." : "Aero's unstaked fee is already taken off automatically. Lower this only to stress-test.";
+    $('#simSearch').placeholder = uni ? 'Search pools, e.g. NVDA, ETH/USDC' : 'Search pools, e.g. NVDAc, ETH/USDC';
+  }
+  function setMode(m) {
+    if (m === mode) return false;
+    modeState[mode] = { addr: pool ? pool.addr : modeState[mode].addr, earn: S.earn, chain: S.chain };
+    mode = m;
+    S.earn = m === 'uni' ? 'fees' : modeState[m].earn;
+    S.chain = modeState[m].chain;
+    applyModeUI();
+    return true;
+  }
   function showView(v) {
     $('#view-lab').hidden = v !== 'lab';
-    $('#view-sim').hidden = v !== 'sim';
+    $('#view-sim').hidden = v === 'lab';
     document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.view === v));
-    if (v === 'sim') { init(); if (location.hash.indexOf('#sim') !== 0) history.replaceState(null, '', '#sim'); writeHash(); }
-    else if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+    if (v === 'lab') { if (location.hash) history.replaceState(null, '', location.pathname + location.search); return; }
+    const m = v === 'uni' ? 'uni' : 'aero', tag = '#' + v;
+    const changed = setMode(m);
+    if (location.hash.indexOf(tag) !== 0) history.replaceState(null, '', tag);
+    if (!inited) { init(); return; }
+    if (changed) {
+      const a = modeState[m].addr || defaultPool();
+      renderSegs(); poolOptions();
+      if (a) selectPool(a, false);
+    }
+    writeHash();
   }
   window.SimOpen = (addr) => {
-    showView('sim');
-    if (inited) selectPool(addr); else { history.replaceState(null, '', '#sim?pool=' + addr); }
+    const p = D ? D.pools.find((x) => x.addr.toLowerCase() === String(addr).toLowerCase()) : (window.PL && window.PL.D.pools.find((x) => x.addr.toLowerCase() === String(addr).toLowerCase()));
+    const v = p && p.venue === 'uniswap' ? 'uni' : 'sim';
+    if (p) { const ms = modeState[v === 'uni' ? 'uni' : 'aero']; ms.addr = p.addr; if (ms.chain !== 'all' && chainOf(p) !== ms.chain) ms.chain = 'all'; if (S.chain !== 'all' && chainOf(p) !== S.chain && (v === 'uni') === (mode === 'uni')) S.chain = 'all'; if (p.venue === 'legacy') { const c = document.querySelector('#simLegacy'); if (c) c.checked = true; } }
+    if (!inited) { history.replaceState(null, '', '#' + v + '?pool=' + addr); showView(v); }
+    else { showView(v); selectPool(addr); }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
   function boot() {
     document.querySelector('.tabs').onclick = (e) => { const b = e.target.closest('button[data-view]'); if (b) showView(b.dataset.view); };
-    showView(location.hash.indexOf('#sim') === 0 ? 'sim' : 'lab');
+    showView(location.hash.indexOf('#sim') === 0 ? 'sim' : location.hash.indexOf('#uni') === 0 ? 'uni' : 'lab');
   }
   if (window.PL) boot(); else document.addEventListener('pl-ready', boot, { once: true });
 })();

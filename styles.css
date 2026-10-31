@@ -202,3 +202,12 @@ td a{color:var(--accent);text-decoration:none;font-size:var(--text-xs)}
 .pct-in input{width:76px;flex:none}
 .pct-in{flex-wrap:wrap;min-width:0}
 .pct-in input{width:64px}
+.venue.uni{background:rgba(255,0,122,.14);color:#ff7ab8}
+.chain{font-size:10px;font-weight:600;padding:1px 6px;border-radius:4px;vertical-align:1px;background:var(--surface-3);color:var(--muted);white-space:nowrap}
+.chain.robinhood{color:#c8f169}.chain.optimism{color:#ff8a8a}.chain.base{color:#8fb0ff}
+.seg.chains{margin-top:var(--space-2);width:max-content;max-width:100%}
+#simCmp td,#simCmp th{white-space:nowrap}
+#simCmp tr.cur td{background:rgba(91,140,255,.07)}
+#simCmp .btn{padding:2px 10px}
+.tabs{overflow-x:auto;scrollbar-width:none}
+.tabs button{white-space:nowrap}

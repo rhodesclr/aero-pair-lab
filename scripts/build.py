@@ -123,6 +123,49 @@ for q in _sp:
         kind=('CL'+str(q['type'])) if cl else ('stable' if q['type']==0 else 'volatile'),fee=fee,apr=round(vol*fee*365/liq,4) if liq>0 else None,src='sugar')
     _added+=1
 print('sugar pools added',_added)
+for p in pools.values(): p.setdefault('chain','base')
+# Aero pools on OP Mainnet and Robinhood Chain (Aero's LP Sugar on each chain)
+from aero_rewards import CHAIN_ID
+try: _U=json.load(open('uni_pools.json'))
+except Exception: _U={'tokens':{},'pools':[]}
+_UT=_U.get('tokens',{})
+_UT.setdefault('robinhood',{}).update({'0xcec185eb182c47d1ba1efc84e6959e18cd620be4':'BTC','0xc6911796042b15d7fa4f6cde69e245ddcd3d9c31':'VIRTUAL'})
+_cusd={}
+for ch_ in ('optimism','robinhood'):
+    tm=_UT.get(ch_,{})
+    _cusd[ch_]={ad:(1.0 if s_=='USDC' else _last.get(s_)) for ad,s_ in tm.items()}
+    try: sp=sugar_all(chain=ch_)
+    except Exception as e: sp=[]; print('sugar_all',ch_,'failed',e)
+    n_=0
+    for q in sp:
+        sa,sb=tm.get(q['t0']),tm.get(q['t1'])
+        if not sa or not sb or sa==sb or sa not in uni or sb not in uni: continue
+        try:
+            d0=decimals(q['t0'],ch_); d1=decimals(q['t1'],ch_)
+            u0=_cusd[ch_].get(q['t0']); u1=_cusd[ch_].get(q['t1'])
+            if not u0 or not u1: continue
+            liq=q['reserve0']/10**d0*u0+q['reserve1']/10**d1*u1
+            if liq<1000: continue
+            cl=q['type']>0
+            # price sanity (skips look-alike tokens): pool price must be within 25% of the app's price
+            if cl and q['sqrt']:
+                pr=(q['sqrt']/2**96)**2*10**(d0-d1)
+                if not (0.75<pr*u1/u0<1.33): print('price check failed',ch_,sa,sb); continue
+            elif q['reserve0'] and q['reserve1']:
+                pr=(q['reserve1']/10**d1)/(q['reserve0']/10**d0)
+                if not (0.75<pr*u1/u0<1.33): print('price check failed',ch_,sa,sb); continue
+            vol=(q['vol0']/2/10**d0*u0+q['vol1']/2/10**d1*u1) if q['wEnd']>q['wStart'] else 0
+            fee=q['poolFee']/1e6 if cl else q['poolFee']/1e4
+        except Exception: continue
+        a_,b_,ta,tb=sa,sb,q['t0'],q['t1']
+        _st=lambda s_: any(x['sym']==s_ and x['type']=='stock' for x in assets)
+        if (_st(b_) and not _st(a_)) or a_=='USDC' or (a_=='ETH' and b_!='USDC'):
+            a_,b_,ta,tb=b_,a_,tb,ta
+        pools[q['lp']]=dict(addr=q['lp'],chain=ch_,a=a_,b=b_,baseAddr=ta,quoteAddr=tb,liq=round(liq),vol=round(vol),url=f"https://app.aero.xyz/deposit/{CHAIN_ID[ch_]}-{q['lp']}",
+            ds=f"https://dexscreener.com/{ch_}/{q['lp']}",label=None,venue='aero',
+            kind=('CL'+str(q['type'])) if cl else ('stable' if q['type']==0 else 'volatile'),fee=fee,apr=round(vol*fee*365/liq,4) if liq>0 else None,src='sugar')
+        n_+=1
+    print('aero pools on',ch_,n_)
 # AERO reward APR (Aero pools only; legacy gauges stopped emitting at the Aero launch)
 from aero_rewards import pool_rewards, aero_usd, decimals
 _usd={}
@@ -139,11 +182,18 @@ _usd.setdefault('0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',1.0)
 _aero=aero_usd()
 print('AERO usd',_aero)
 def _rew(p):
-    try: r=pool_rewards(p['addr'],_usd,_aero)
+    ch_=p.get('chain','base')
+    try: r=pool_rewards(p['addr'],_usd if ch_=='base' else _cusd.get(ch_,{}),_aero,ch_)
     except Exception: r=None
     if r: p.update(rapr=r.get('rapr'),em=r.get('em'),staked=r.get('staked'),ufee=r.get('ufee'))
 with _cf.ThreadPoolExecutor(6) as _ex: list(_ex.map(_rew,[p for p in pools.values() if p['venue']=='aero']))
 print('aero apr', sum(p.get('rapr') is not None for p in pools.values()))
+# Uniswap pools (v2/v3/v4) on Base, OP Mainnet and Robinhood Chain, from uni_pools.py + uni_enrich.py
+_nu=0
+for p in _U.get('pools',[]):
+    if p['a'] in uni and p['b'] in uni and p['addr'] not in pools:
+        pools[p['addr']]=p; _nu+=1
+print('uniswap pools',_nu)
 def pack(series,step):
     keys=sorted({k for s in series.values() for k in s})
     return dict(start=keys[0],end=keys[-1],step=step,prices={s:[series[s].get(k) for k in range(keys[0],keys[-1]+1)] for s in series})

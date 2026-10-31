@@ -1,10 +1,11 @@
 # Reads each Aerodrome pool's swap fee on-chain (Base public RPC). CL = Slipstream (fee() in pips), else basic pool via PoolFactory.getFee(pool, stable).
 import json,urllib.request,time
 RPCS=['https://base-rpc.publicnode.com','https://mainnet.base.org','https://base.llamarpc.com']
-def call(to,data):
+CHAIN_RPCS={'base':RPCS,'optimism':['https://optimism-rpc.publicnode.com','https://mainnet.optimism.io'],'robinhood':['https://rpc.mainnet.chain.robinhood.com']}
+def call(to,data,chain='base'):
     body={"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":to,"data":data},"latest"]}
     for k in range(6):
-        rpc=RPCS[k%len(RPCS)]
+        rp=CHAIN_RPCS[chain]; rpc=rp[k%len(rp)]
         try:
             r=urllib.request.Request(rpc,data=json.dumps(body).encode(),headers={'Content-Type':'application/json','User-Agent':'Mozilla/5.0'})
             o=json.load(urllib.request.urlopen(r,timeout=20))

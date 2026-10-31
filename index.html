@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Aero Pair Lab — Correlation for Aero LPs</title>
-<meta name="description" content="Correlation matrix, ratio volatility and impermanent-loss stats for Coinbase tokenized stocks and crypto on Aero (Base).">
+<meta name="description" content="Correlation matrix, IL stats and LP simulators for stock tokens and crypto on Aero and Uniswap (Base, OP Mainnet, Robinhood Chain).">
 <link rel="preconnect" href="https://api.fontshare.com">
 <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&f[]=jet-brains-mono@400,500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
@@ -22,12 +22,12 @@
     <svg viewBox="0 0 24 24" width="24" height="24" aria-label="Aero Pair Lab" role="img"><rect x="2" y="2" width="9" height="9" rx="1.5" fill="currentColor"/><rect x="13" y="2" width="9" height="9" rx="1.5" fill="currentColor" opacity=".45"/><rect x="2" y="13" width="9" height="9" rx="1.5" fill="currentColor" opacity=".45"/><rect x="13" y="13" width="9" height="9" rx="1.5" fill="currentColor"/></svg>
     <div>
       <h1>Aero Pair Lab</h1>
-      <p class="sub">Correlation, IL risk &amp; LP simulator for Aero — stock tokens + crypto</p>
+      <p class="sub">Correlation, IL risk &amp; LP simulators for Aero and Uniswap — stock tokens + crypto</p>
     </div>
   </div>
   <div class="asof" id="asof"><span class="live"><span id="liveDot" class="live-dot off"></span><span id="liveTxt">Connecting…</span></span><span id="asofTxt">Loading data…</span></div>
 </header>
-<nav class="tabs" aria-label="Views"><button data-view="lab" class="on">Pair Lab</button><button data-view="sim">LP Simulator</button></nav>
+<nav class="tabs" aria-label="Views"><button data-view="lab" class="on">Pair Lab</button><button data-view="sim">Aero LP Simulator</button><button data-view="uni">Uniswap LP Simulator</button></nav>
 
 <main id="view-lab">
   <section class="controls card" aria-label="Controls">
@@ -100,6 +100,8 @@
       <div class="filters">
         <label class="chk"><input type="checkbox" id="fPool" checked> Has pool</label>
         <label class="chk" title="Pre-Oct 22 2026 Aerodrome pools: no longer earn AERO rewards, liquidity is migrating out"><input type="checkbox" id="fLegacy"> Include old Aerodrome pools</label>
+        <label class="chk">Venue <select id="fVenue" aria-label="Venue"><option value="both" selected>Aero + Uniswap</option><option value="aero">Aero only</option><option value="uni">Uniswap only</option></select></label>
+        <label class="chk">Chain <select id="fChain" aria-label="Chain"><option value="all" selected>All chains</option><option value="base">Base</option><option value="optimism">OP Mainnet</option><option value="robinhood">Robinhood Chain</option></select></label>
         <label class="chk"><input type="checkbox" id="fSel"> Only selected tokens</label>
         <label class="chk"><input type="checkbox" id="fUsd" checked> Include USDC pairs</label>
         <label class="chk">Min TVL <select id="fTvl" aria-label="Minimum pool TVL"><option value="0">Any</option><option value="10000" selected>$10K+</option><option value="50000">$50K+</option><option value="250000">$250K+</option><option value="1000000">$1M+</option></select></label>
@@ -118,8 +120,8 @@
           <th data-k="liq" class="num">Pool TVL</th>
           <th data-k="vol" class="num">24h vol</th>
           <th data-k="turn" class="num">Vol/TVL</th>
-          <th data-k="apr" class="num" title="24h volume × pool fee × 365 ÷ TVL. Unstaked LPs only.">Fee APR</th>
-          <th data-k="rapr" class="num" title="AERO rewards APR for staked LPs, from Aero's LP Sugar contract (same formula as the Aero app). Biggest pool for the pair. Updated hourly.">AERO APR</th>
+          <th data-k="apr" class="num" title="24h volume × pool fee × 365 ÷ TVL, across the pair's pools on the selected venues and chains. Aero: unstaked LPs only. Uniswap: after protocol fee.">Fee APR</th>
+          <th data-k="rapr" class="num" title="AERO rewards APR for staked LPs, from Aero's LP Sugar contract (same formula as the Aero app). Biggest Aero pool for the pair. Updated hourly.">AERO APR</th>
           <th>Pool</th>
         </tr></thead>
         <tbody></tbody>
@@ -136,11 +138,12 @@
       <li><b>IL full range</b> is the realized impermanent loss of a v2-style (full-range) position opened at the start of the period vs simply holding, before fees and emissions. Concentrated ranges amplify it.</li>
       <li><b>In range</b> is the share of the period the A/B price stayed within your range (the −% / +% you set) of the starting price.</li>
       <li><b>Vol/TVL</b> is 24h volume ÷ pool liquidity.</li>
-      <li><b>AERO APR</b> = the pool's AERO reward stream (read from Aero's LP Sugar contract on Base, the same contract the Aero app uses) × AERO price × 365 ÷ the value of liquidity staked in the gauge, using the Aero app's formula. It's for the pair's biggest pool and refreshes hourly. You earn this <b>instead of</b> trading fees when you stake.</li>
+      <li><b>Venues and chains.</b> Pool columns cover Aero and Uniswap (v2, v3, v4) pools on Base, OP Mainnet and Robinhood Chain, limited to pools where both tokens are coins in this app. Use the Venue and Chain filters to narrow it down. On Robinhood Chain, Robinhood's stock tokens (e.g. NVDA) are grouped with the matching Coinbase stock token (NVDAc) because both track the same share, and USDG counts as the dollar.</li>
+      <li><b>AERO APR</b> = the pool's AERO reward stream (read from Aero's LP Sugar contract on Base, the same contract the Aero app uses) × AERO price × 365 ÷ the value of liquidity staked in the gauge, using the Aero app's formula. It's for the pair's biggest Aero pool and refreshes hourly. You earn this <b>instead of</b> trading fees when you stake.</li>
       <li><b>Fee APR</b> = last 24h volume × the pool's swap fee (read on-chain) × 365 ÷ pool TVL, combined across the pair's pools. It's a one-day snapshot, so it jumps around. On Aero, trading fees go to <b>unstaked</b> LPs; if you stake in the gauge you give up fees and earn AERO emissions instead (not shown). For Slipstream (concentrated) pools this is the pool-wide average — a tight in-range position earns more, an out-of-range one earns nothing.</li>
       <li>Stock tokens use the underlying share price (the Coinbase tokens are 1:1 backed, with a small dividend multiplier), so correlation history predates each token's launch on Aero/Aerodrome. US markets are closed nights and weekends — the stock side is flat then, while crypto keeps moving.</li>
     </ul>
-    <p class="muted small">Prices: Yahoo Finance (stocks), Coinbase Exchange (crypto). Pools: DEX Screener + on-chain fees (Base). <b>Aero</b> pools by default; old Aerodrome pools (replaced by Aero on Oct 22, 2026 and no longer earning AERO rewards) can be included with the checkbox. Token list: Coinbase Tokenized Stocks API. Not financial advice.</p>
+    <p class="muted small">Prices: Yahoo Finance (stocks), Coinbase Exchange (crypto). Pools: DEX Screener, Aero's LP Sugar contracts and Uniswap contracts on Base, OP Mainnet and Robinhood Chain (fees read on-chain). <b>Aero</b> pools by default; old Aerodrome pools (replaced by Aero on Oct 22, 2026 and no longer earning AERO rewards) can be included with the checkbox. Token list: Coinbase Tokenized Stocks API. Not financial advice.</p>
   </section>
 </main>
 
@@ -153,7 +156,8 @@
           <input id="simSearch" type="search" placeholder="Search pools, e.g. NVDAc, ETH/USDC" autocomplete="off" aria-label="Search pools">
           <select id="simPool" aria-label="Pool"></select>
         </div>
-        <label class="chk small"><input type="checkbox" id="simLegacy"> Include old Aerodrome pools</label>
+        <div class="seg chains" id="simChains" aria-label="Chain"></div>
+        <label class="chk small" id="simLegacyWrap"><input type="checkbox" id="simLegacy"> Include old Aerodrome pools</label>
       </div>
       <div class="sim-title">
         <h2 id="simTitle">Pool</h2>
@@ -161,6 +165,13 @@
       </div>
     </div>
     <div class="kpis sim-kpis" id="simLive"></div>
+  </section>
+
+  <section class="card" id="simCmpCard">
+    <div class="card-h"><h2 id="simCmpTitle">Compare venues · same pair</h2><span class="muted small" id="simCmpSub">your range applied to every pool of this pair on Aero and Uniswap</span></div>
+    <div class="table-wrap">
+      <table id="simCmp"><thead><tr><th>Venue · chain</th><th>Pool</th><th class="num">TVL</th><th class="num">24h vol</th><th class="num">Fee APR · your range</th><th class="num">AERO APR · your range</th><th class="num">Backtest net vs hold</th><th></th></tr></thead><tbody></tbody></table>
+    </div>
   </section>
 
   <section class="sim-grid">
@@ -181,7 +192,7 @@
       </div>
       <div class="ctl"><span class="lbl">Backtest period</span><div class="seg" id="simPeriods"></div></div>
       <div class="ctl"><span class="lbl">Backtest range</span><div class="seg" id="simMode"></div></div>
-      <div class="ctl"><span class="lbl">You earn</span><div class="seg" id="simEarn"></div>
+      <div class="ctl" id="simEarnCtl"><span class="lbl">You earn</span><div class="seg" id="simEarn"></div>
         <div class="sub-in" id="simAeroSrcWrap" hidden><span class="muted small">AERO reward rate</span><div class="seg" id="simAeroSrc"></div></div>
         <label class="sub-in" id="simAeroWrap" hidden><span class="muted small">AERO reward APR % (from the Aero app)</span><input id="simAero" type="number" min="0" step="1" value="0"></label>
       </div>
@@ -189,7 +200,7 @@
         <label class="sub-in" id="simCustomVolWrap" hidden><span class="muted small">Custom daily volume (USD)</span><input id="simCustomVol" type="number" min="0" step="1000"></label>
       </div>
       <div class="ctl"><label class="lbl" for="simFeeShare">LP share of swap fees %</label><input id="simFeeShare" type="number" min="0" max="100" step="5" value="100">
-        <span class="muted small">Aero's unstaked fee is already taken off automatically. Lower this only to stress-test.</span></div>
+        <span class="muted small" id="simFeeNote">Aero's unstaked fee is already taken off automatically. Lower this only to stress-test.</span></div>
     </aside>
 
     <div class="sim-main">
@@ -218,7 +229,10 @@
   <section class="card method">
     <h2>How the simulator works</h2>
     <ul>
-      <li><b>Live numbers.</b> Pool price, TVL and volume refresh from DEX Screener every 60 seconds. The pool's current price, active liquidity and dynamic swap fee are read straight from the pool contract on Base every 15 seconds.</li>
+      <li><b>Two simulators, three chains.</b> The Aero simulator covers Aero pools on Base, OP Mainnet and Robinhood Chain (plus old Aerodrome pools on Base). The Uniswap simulator covers Uniswap v2, v3 and v4 pools on the same three chains. Only pools where both tokens are coins in this app are listed. On Robinhood Chain, Robinhood's stock tokens (e.g. NVDA) use the same price history as the matching Coinbase stock token (NVDAc), and USDG counts as the dollar side.</li>
+      <li><b>Live numbers.</b> Pool price, TVL and volume refresh from DEX Screener every 60 seconds. The pool's current price, active liquidity and swap fee are read straight from the pool contract on its own chain every 15 seconds (Uniswap v4 pools through Uniswap's StateView contract).</li>
+      <li><b>Uniswap fees.</b> LPs earn the pool's fee tier on volume while in range. Where Uniswap's protocol fee is switched on for a pool, that cut is taken off automatically. Uniswap has no AERO-style rewards, so the AERO columns don't apply.</li>
+      <li><b>Compare venues.</b> The comparison table applies your exact range and deposit to every pool of the same pair on Aero and Uniswap across all three chains, so you can see which pool pays best for the same position.</li>
       <li><b>Price history.</b> Aero pools only launched on Oct 22, 2026, so the up-to-1-year chart is built from each token's USD price (Coinbase Exchange for crypto, Yahoo Finance for the underlying share of stock tokens) and divided into the pair price, with the live pool price appended. Hourly bars for 7D–90D, daily for 180D–1Y.</li>
       <li><b>Fees.</b> Each hour (or day) in range earns <i>daily volume × fee × your share of active liquidity</i>. For Slipstream pools your share is your liquidity ÷ (pool's active liquidity + yours), so tighter ranges earn more per dollar. Out of range earns nothing. Volume and liquidity are held at today's level for the whole backtest, which is the main simplification.</li>
       <li><b>AERO rewards.</b> On Aero you either earn trading fees (unstaked) or stake in the gauge for AERO rewards, not both. The simulator reads the pool's live AERO stream from Aero's LP Sugar contract, the same one the Aero app uses. Your share = your liquidity ÷ (staked in-range liquidity + yours), so it's specific to your range, and it pays only while you're in range. The pool-level AERO APR in the top strip uses the Aero app's own formula. Backtests hold today's AERO rate and price constant. Old Aerodrome gauges stopped paying at the Aero launch.</li>
