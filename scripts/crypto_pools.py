@@ -26,6 +26,7 @@ C={ # sym: (name, base address, coingecko id)
 'cbETH':('Coinbase Wrapped Staked ETH','0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22','coinbase-wrapped-staked-eth'),
 'wstETH':('Lido Wrapped stETH','0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452','wrapped-steth'),
 'EURC':('Euro Coin','0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42','euro-coin'),
+'HYPE':('Hyperliquid (cbHYPE)','0xB200000000000000000000451d033a5000cb479e','hyperliquid'),
 'DIEM':('Diem (Venice compute)','0xf4d97f2da56e8c3098f3a8d538db630a2606a024','diem'),
 'USDC':('USD Coin','0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',None),
 }
