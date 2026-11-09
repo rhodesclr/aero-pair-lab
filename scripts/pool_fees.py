@@ -2,8 +2,8 @@
 import json,urllib.request,time
 RPCS=['https://base-rpc.publicnode.com','https://mainnet.base.org','https://base.llamarpc.com']
 CHAIN_RPCS={'base':RPCS,'optimism':['https://optimism-rpc.publicnode.com','https://mainnet.optimism.io'],'robinhood':['https://rpc.mainnet.chain.robinhood.com']}
-def call(to,data,chain='base'):
-    body={"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":to,"data":data},"latest"]}
+def call(to,data,chain='base',block='latest'):
+    body={"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":to,"data":data},block if isinstance(block,str) else hex(block)]}
     for k in range(6):
         rp=CHAIN_RPCS[chain]; rpc=rp[k%len(rp)]
         try:

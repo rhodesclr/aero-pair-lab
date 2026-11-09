@@ -211,3 +211,32 @@ td a{color:var(--accent);text-decoration:none;font-size:var(--text-xs)}
 #simCmp .btn{padding:2px 10px}
 .tabs{overflow-x:auto;scrollbar-width:none}
 .tabs button{white-space:nowrap}
+
+/* stale-data warning */
+.stale-banner{margin:8px var(--space-5,16px);padding:10px 14px;border:1px solid #6b4f1d;background:#2a2112;color:#f6c177;border-radius:10px;font-size:var(--text-sm);line-height:1.45}
+.stale-banner b{color:#ffd99a}
+.hist-note{margin:-4px 0 10px;line-height:1.45}
+
+/* compare venues: cards on narrow screens instead of a table that runs off the edge */
+@media (max-width:760px){
+  #simCmp thead{display:none}
+  #simCmp, #simCmp tbody{display:block;width:100%}
+  #simCmp tr{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px 10px;padding:12px 10px;border-bottom:1px solid var(--divider)}
+  #simCmp td{display:block;padding:0;border:0;text-align:left;min-width:0}
+  #simCmp td.c-venue{grid-column:1 / 3}
+  #simCmp td.c-act{grid-column:3;grid-row:1;justify-self:end}
+  #simCmp td.c-pool{grid-column:1 / -1}
+  #simCmp td[data-l]::before{content:attr(data-l);display:block;font-size:var(--text-xs);color:var(--muted);font-family:inherit}
+  #simCmp td[colspan]{grid-column:1 / -1}
+  #simCmp tr.cur{background:rgba(91,140,255,.07)}
+  #simCmp tr.cur td{background:none}
+}
+
+/* real position check */
+.pos-form{display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap;margin-bottom:var(--space-2)}
+.pos-form input{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:var(--space-2) var(--space-3);font-size:var(--text-sm);font-family:var(--mono);width:180px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#0b1020;font-weight:600}
+.pos-tbl{width:100%;border-collapse:collapse;margin:var(--space-3) 0;font-size:var(--text-sm)}
+.pos-tbl th,.pos-tbl td{padding:8px 10px;border-bottom:1px solid var(--divider);text-align:left}
+.pos-tbl td.num,.pos-tbl th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.pos-warn{color:#f6c177}

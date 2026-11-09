@@ -196,8 +196,15 @@
         <div class="sub-in" id="simAeroSrcWrap" hidden><span class="muted small">AERO reward rate</span><div class="seg" id="simAeroSrc"></div></div>
         <label class="sub-in" id="simAeroWrap" hidden><span class="muted small">AERO reward APR % (from the Aero app)</span><input id="simAero" type="number" min="0" step="1" value="0"></label>
       </div>
-      <div class="ctl"><span class="lbl">Daily volume assumption</span><div class="seg" id="simVolMode"></div>
+      <div class="ctl"><span class="lbl">Volume &amp; liquidity history</span><div class="seg" id="simVolMode"></div>
         <label class="sub-in" id="simCustomVolWrap" hidden><span class="muted small">Custom daily volume (USD)</span><input id="simCustomVol" type="number" min="0" step="1000"></label>
+      </div>
+      <div class="ctl"><span class="lbl">Re-center range</span><div class="seg" id="simReb"></div>
+        <div class="sub-in" id="simRebOpts" hidden>
+          <label id="simRebDelayWrap" hidden><span class="muted small">Hours out of range before re-centering</span><input id="simRebDelay" type="number" min="1" step="1" value="6"></label>
+          <label><span class="muted small">Slippage % on the rebalance swap (pool fee added automatically)</span><input id="simSlip" type="number" min="0" step="0.05" value="0.1"></label>
+          <label><span class="muted small">Gas per rebalance (USD)</span><input id="simGas" type="number" min="0" step="0.01" value="0.05"></label>
+        </div>
       </div>
       <div class="ctl"><label class="lbl" for="simFeeShare">LP share of swap fees %</label><input id="simFeeShare" type="number" min="0" max="100" step="5" value="100">
         <span class="muted small" id="simFeeNote">Aero's unstaked fee is already taken off automatically. Lower this only to stress-test.</span></div>
@@ -214,6 +221,7 @@
       </div>
       <div class="card">
         <div class="card-h"><h2 id="simBtTitle">Backtest</h2></div>
+        <p class="muted small hist-note" id="simHistNote"></p>
         <div class="kpis" id="simBt"></div>
         <div class="chart-box tall"><canvas id="simValue" aria-label="Position value vs holding"></canvas></div>
       </div>
@@ -222,6 +230,16 @@
         <div class="table-wrap">
           <table id="simOpt"><thead><tr><th>Range</th><th class="num">In range</th><th class="num">Exits</th><th class="num">Earned</th><th class="num">IL</th><th class="num">Net vs hold</th><th class="num">Est. APR now</th></tr></thead><tbody></tbody></table>
         </div>
+      </div>
+      <div class="card" id="posCard">
+        <div class="card-h"><h2>Check against a real position</h2><span class="muted small">enter an LP position NFT ID from this pool to compare what it actually earned with what the simulator predicts</span></div>
+        <form class="pos-form" id="posForm" autocomplete="off">
+          <label class="lbl" for="posId">Position NFT ID</label>
+          <input id="posId" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="e.g. 1976660">
+          <button class="btn primary" type="submit" id="posGo">Check</button>
+        </form>
+        <p class="muted small" id="posStatus">Find the ID in the Aero or Uniswap app under your positions, or on BaseScan as the NFT token ID. Works for concentrated-liquidity (CL / v3) positions. Read-only: nothing is signed or sent.</p>
+        <div id="posOut"></div>
       </div>
     </div>
   </section>
@@ -233,12 +251,14 @@
       <li><b>Live numbers.</b> Pool price, TVL and volume refresh from DEX Screener every 60 seconds. The pool's current price, active liquidity and swap fee are read straight from the pool contract on its own chain every 15 seconds (Uniswap v4 pools through Uniswap's StateView contract).</li>
       <li><b>Uniswap fees.</b> LPs earn the pool's fee tier on volume while in range. Where Uniswap's protocol fee is switched on for a pool, that cut is taken off automatically. Uniswap has no AERO-style rewards, so the AERO columns don't apply.</li>
       <li><b>Compare venues.</b> The comparison table applies your exact range and deposit to every pool of the same pair on Aero and Uniswap across all three chains, so you can see which pool pays best for the same position.</li>
-      <li><b>Price history.</b> Aero pools only launched on Oct 22, 2026, so the up-to-1-year chart is built from each token's USD price (Coinbase Exchange for crypto, Yahoo Finance for the underlying share of stock tokens) and divided into the pair price, with the live pool price appended. Hourly bars for 7D–90D, daily for 180D–1Y.</li>
-      <li><b>Fees.</b> Each hour (or day) in range earns <i>daily volume × fee × your share of active liquidity</i>. For Slipstream pools your share is your liquidity ÷ (pool's active liquidity + yours), so tighter ranges earn more per dollar. Out of range earns nothing. Volume and liquidity are held at today's level for the whole backtest, which is the main simplification.</li>
-      <li><b>AERO rewards.</b> On Aero you either earn trading fees (unstaked) or stake in the gauge for AERO rewards, not both. The simulator reads the pool's live AERO stream from Aero's LP Sugar contract, the same one the Aero app uses. Your share = your liquidity ÷ (staked in-range liquidity + yours), so it's specific to your range, and it pays only while you're in range. The pool-level AERO APR in the top strip uses the Aero app's own formula. Backtests hold today's AERO rate and price constant. Old Aerodrome gauges stopped paying at the Aero launch.</li>
+      <li><b>Price history.</b> The backtest follows each pool's own trades: hourly and daily open/high/low/close bars from GeckoTerminal for this pool, then other pools of the same pair (longest history first) where this one is newer. GeckoTerminal's free API reaches back about 6 months, and new Aero pools only launched on Oct 22, 2026, so anything older falls back to the two tokens' USD prices (Coinbase Exchange for crypto, Yahoo Finance for the share behind stock tokens), scaled to line up with the pool price where they meet. The note under the backtest title shows exactly which source covers how much of the period. Hourly bars for 7D–90D, daily for 180D–1Y.</li>
+      <li><b>Fees.</b> Each bar earns <i>that bar's real volume × fee × your share of active liquidity × the part of the bar spent in range</i>. Time in range uses each bar's high and low, so a wick through your range counts even if the close didn't. With "Volume &amp; liquidity history" set to real pool history, volume is the pool's own volume for that hour or day, and your share uses the pool's active liquidity read on-chain for that day. Before a pool existed, its average daily volume is used. For Slipstream pools your share is your liquidity ÷ (pool's active liquidity + yours), so tighter ranges earn more per dollar.</li>
+      <li><b>AERO rewards.</b> On Aero you either earn trading fees (unstaked) or stake in the gauge for AERO rewards, not both. The live strip reads the pool's current AERO stream from Aero's LP Sugar contract, the same one the Aero app uses. The backtest uses each day's actual emissions and staked liquidity (read from LP Sugar at 00:00 UTC every day, refreshed hourly) and that day's AERO price. Your share = your liquidity ÷ (staked in-range liquidity + yours), and it pays only while you're in range. Old Aerodrome gauges stopped paying at the Aero launch.</li>
       <li><b>IL and net.</b> Impermanent loss compares the LP position with simply holding the tokens you deposited. Net vs holding = fees (or rewards) − IL. Total P&amp;L is in USD versus your deposit.</li>
       <li><b>Backtest range.</b> "My exact prices" checks whether your chosen prices were in range across the period. "Same % width from start" opens the same-width range around the price at the start of the period, which is the fairer test of a strategy.</li>
-      <li>Estimates only, not financial advice. Gas, rebalancing, slippage and price impact are not included.</li>
+      <li><b>Re-centering.</b> Optional: when the price leaves your range (right away, or after it has stayed out for a set number of hours), the backtest closes the position and reopens the same-width range around the new price. Each re-center pays the pool fee and your slippage on the tokens that have to be swapped, plus a flat gas cost.</li>
+      <li><b>Check against a real position.</b> Enter an LP position NFT ID and the page reads it on-chain: its exact ticks, when it was minted and staked, and what it actually earned, from the pool's own fee and reward counters (the same math the contract uses when you collect). It then runs the backtest over the same window with the same ticks and starting tokens, so you can see how close the simulator is. Works for Aero / old Aerodrome Slipstream and Uniswap v3 positions on Base and OP Mainnet. If liquidity was added or removed after minting, or the position was staked and unstaked more than once, the real numbers are approximate and the page says so.</li>
+      <li>Estimates only, not financial advice. Price impact of your own deposit isn't modelled, and history older than about 6 months uses USD price feeds rather than the pool itself.</li>
     </ul>
   </section>
 </main>

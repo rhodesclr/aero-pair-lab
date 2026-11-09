@@ -5,7 +5,7 @@
   let D, A;
   let pool = null, chainSt = null, ser = null, avg7 = null, aeroPx = null;
   const WIDTH_BPS = { 1: 10, 10: 50, 50: 300, 100: 500, 150: 750, 200: 1000, 250: 1250 };
-  const S = { addr: null, dep: 1000, lo: null, hi: null, full: false, period: '90D', mode: 'fixed', earn: 'fees', aeroSrc: 'live', aeroApr: 0, volMode: 'live', customVol: null, feeShare: 100, inv: false, chain: 'all' };
+  const S = { addr: null, dep: 1000, lo: null, hi: null, full: false, period: '90D', mode: 'fixed', earn: 'fees', aeroSrc: 'live', aeroApr: 0, volMode: 'hist', customVol: null, reb: 'off', rebDelay: 6, slip: 0.1, gas: 0.05, feeShare: 100, inv: false, chain: 'all' };
   // which simulator is showing: 'aero' (Aero + old Aerodrome pools) or 'uni' (Uniswap v2/v3/v4)
   let mode = 'aero';
   const modeState = { aero: { addr: null, earn: 'fees', chain: 'all' }, uni: { addr: null, earn: 'fees', chain: 'all' } };
@@ -59,20 +59,162 @@
     if (pool.a === 'USDC') return [1, 1 / P];
     return [P * ub, ub];
   }
+  // ---------- pool trade history (GeckoTerminal) + on-chain daily history (hist.json) ----------
+  // histStore[chain:addr:res] = { map: {key: [o, h, l, c, volUSD-or-null, volUnits, unitIsB]}, k0, k1, n } oriented to that pool's a/b
+  const histStore = {};
+  let chainHist = null, chainDayIdx = null;
+  const hkey = (p, res) => chainOf(p) + ':' + p.addr.toLowerCase() + ':' + res;
+  const pairAll = (p) => D.pools.filter((x) => (x.a === p.a && x.b === p.b) || (x.a === p.b && x.b === p.a));
+  function orientHist(p, gt, res) {
+    if (!gt || !gt.bars || !gt.bars.length) return null;
+    // which way round? compare GeckoTerminal's last close with the pool's live price (or the USD feeds)
+    const lastC = gt.bars[gt.bars.length - 1][4];
+    let ref = p.price || null;
+    if (!ref) {
+      const sa = usdArr(p.a, 'daily'), sb = usdArr(p.b, 'daily');
+      const la = sa ? sa.filter((x) => x != null).pop() : 1, lb = sb ? sb.filter((x) => x != null).pop() : 1;
+      if (la && lb) ref = la / lb;
+    }
+    const aIsBase = ref ? Math.abs(Math.log(lastC / ref)) <= Math.abs(Math.log(1 / lastC / ref)) : true;
+    const map = {};
+    const step = res === 'day' ? 86400 : 3600;
+    let k0 = Infinity, k1 = -Infinity;
+    for (const [t, o, h, l, c, v] of gt.bars) {
+      if (!(c > 0)) continue;
+      // keys line up with the app's price arrays: daily = day of the bar, hourly = hour the bar ends
+      const k = res === 'day' ? Math.round(t / 86400) : Math.round(t / 3600) + 1;
+      map[k] = aIsBase ? [o, h, l, c, v, true] : [1 / o, 1 / l, 1 / h, 1 / c, v, false];
+      k0 = Math.min(k0, k); k1 = Math.max(k1, k);
+    }
+    return { map, k0, k1, n: k1 - k0 + 1, step };
+  }
+  async function loadHistory(p, prio, onStage) {
+    const res = PERIODS[S.period][0];
+    const need = PERIODS[S.period][1];
+    const jobs = [];
+    const want = (x, r, n, pr) => {
+      const key = hkey(x, r);
+      if (histStore[key] !== undefined) { if (histStore[key] && histStore[key].then) jobs.push(histStore[key]); return; }
+      const job = Live.poolHistory(x.addr, chainOf(x), r, n, pr).then((gt) => { histStore[key] = orientHist(x, gt, r) || false; }).catch(() => { histStore[key] = false; });
+      histStore[key] = job; jobs.push(job);
+    };
+    const got = (x, r) => { const h = histStore[hkey(x, r)]; return h && !h.then ? h : null; };
+    // 1) this pool's own trades
+    want(p, 'day', 400, prio + 3);
+    if (res === 'hourly') want(p, 'hour', need + 48, prio + 3);
+    await Promise.all(jobs.splice(0));
+    onStage && onStage();
+    // 2) the pool's history may be short (new Aero pools launched Oct 22, 2026): extend the price path with the same
+    //    pair's longest-lived other pools (old Aerodrome, Uniswap, other chains)
+    const own = got(p, res === 'hourly' ? 'hour' : 'day');
+    if (!own || own.n < need) {
+      const sibs = pairAll(p).filter((x) => x !== p && (x.liq || 0) > 5000).sort((x, y) => (y.liq || 0) - (x.liq || 0)).slice(0, 4);
+      for (const x of sibs) want(x, 'day', 400, prio + 2);
+      await Promise.all(jobs.splice(0));
+      if (res === 'hourly') {
+        const best = sibs.map((x) => ({ x, h: got(x, 'day') })).filter((o) => o.h).sort((u, v) => u.h.k0 - v.h.k0)[0];
+        if (best && (!own || best.h.k0 * 24 < own.k0 - 24)) want(best.x, 'hour', need + 48, prio + 2);
+        await Promise.all(jobs.splice(0));
+      }
+      onStage && onStage();
+    }
+    // 3) daily volume for the other pools in the compare table
+    for (const x of pairPools(p)) if (x !== p) want(x, 'day', 400, prio);
+    await Promise.all(jobs);
+    onStage && onStage();
+  }
+  function chainRow(p, day) { // on-chain snapshot for a pool on a day (nearest earlier day, else the earliest)
+    if (!chainHist || !chainDayIdx) return null;
+    const arr = chainHist.p[p.addr.toLowerCase()];
+    if (!arr) return null;
+    let i = chainDayIdx[day];
+    if (i == null) { const ds = chainHist.days; i = day > ds[ds.length - 1] ? ds.length - 1 : day < ds[0] ? 0 : ds.findIndex((d) => d > day) - 1; }
+    for (let j = i; j >= 0; j--) if (arr[j]) return arr[j];
+    for (let j = i + 1; j < arr.length; j++) if (arr[j]) return arr[j];
+    return null;
+  }
+
   function buildSeries() {
     const [res, n] = PERIODS[S.period];
+    const r2 = res === 'hourly' ? 'hour' : 'day';
     const src = D[res], len = src.end - src.start + 1, i0 = Math.max(0, len - n - 1);
-    const sa = usdArr(pool.a, res), sb = usdArr(pool.b, res);
-    const t = [], P = [], ua = [], ub = [];
+    const sa = usdArr(pool.a, res), sb = usdArr(pool.b, res), sAero = D[res].prices.AERO;
+    // price sources: this pool first, then the same pair's other pools, longest history first
+    const hs = (x, r) => { const h = histStore[hkey(x, r)]; return h && !h.then ? h : null; };
+    const own = hs(pool, r2);
+    const ownDay = hs(pool, 'day');
+    const sibs = pairAll(pool).filter((x) => x !== pool).map((x) => ({ x, h: hs(x, r2) })).filter((o) => o.h).sort((u, v) => v.h.n - u.h.n);
+    const srcs = [...(own ? [{ x: pool, h: own }] : []), ...sibs];
+    // average daily USD volume of this pool over its own full days (used before the pool existed)
+    let avgDayVol = null;
+    if (ownDay) {
+      let tot = 0, cnt = 0;
+      for (let k = ownDay.k0; k < ownDay.k1; k++) { // full days only (the last bar is today, still filling)
+        const bb = ownDay.map[k], di = k - D.daily.start;
+        cnt++;
+        if (!bb) continue;
+        const uB = pool.b === 'USDC' ? 1 : D.daily.prices[pool.b]?.[di], uA = pool.a === 'USDC' ? 1 : D.daily.prices[pool.a]?.[di];
+        const u = bb[5] ? uB : uA;
+        if (u) tot += bb[4] * u;
+      }
+      if (cnt) avgDayVol = tot / cnt;
+    }
+    const t = [], P = [], H = [], L = [], ua = [], ub = [], vol = [], ps = [], vs = [], ae = [], hc = [];
+    const last = srcs.map(() => null);
+    let feedK = null; // scale factor so the USD-feed ratio lines up with pool prices where they meet
+    const raw = [];
     for (let i = i0; i < len; i++) {
+      const k = src.start + i;
       const x = sa ? sa[i] : 1, y = sb ? sb[i] : 1;
+      let bar = null, from = null, flip = false;
+      for (let j = 0; j < srcs.length; j++) {
+        const h = srcs[j].h;
+        if (k < h.k0 || k > h.k1) continue;
+        const f = srcs[j].x.a !== pool.a;
+        let b0 = h.map[k];
+        if (!b0) { const lc = last[j]; if (lc == null) continue; b0 = [lc, lc, lc, lc, 0, true]; } // no trades that bar: price unchanged
+        last[j] = b0[3];
+        bar = f ? [1 / b0[0], 1 / b0[2], 1 / b0[1], 1 / b0[3], b0[4], !b0[5]] : b0; from = srcs[j].x; flip = f;
+        break;
+      }
+      // keep carrying "last close" for sources even when an earlier one won this bar
+      for (let j = 0; j < srcs.length; j++) { const b0 = srcs[j].h.map[k]; if (b0) last[j] = b0[3]; }
+      raw.push({ k, x, y, bar, from });
+    }
+    // align the feed ratio to the pool price at the boundary
+    const firstPool = raw.findIndex((r) => r.bar && r.x != null && r.y != null);
+    if (firstPool >= 0) feedK = raw[firstPool].bar[3] / (raw[firstPool].x / raw[firstPool].y);
+    let lastPoolIdx = -1;
+    for (let i = raw.length - 1; i >= 0; i--) if (raw[i].bar && raw[i].x != null && raw[i].y != null) { lastPoolIdx = i; break; }
+    const feedK2 = lastPoolIdx >= 0 ? raw[lastPoolIdx].bar[3] / (raw[lastPoolIdx].x / raw[lastPoolIdx].y) : feedK;
+    const info = { pool: 0, pair: 0, feed: 0, vPool: 0, vAvg: 0, vLive: 0, pairName: null };
+    for (let ii = 0; ii < raw.length; ii++) {
+      const { k, x, y, bar, from } = raw[ii];
       if (x == null || y == null) continue;
-      t.push((src.start + i) * src.step); P.push(x / y); ua.push(x); ub.push(y);
+      let Pc, Ph, Pl;
+      if (bar) { Pc = bar[3]; Ph = Math.max(bar[1], Pc); Pl = Math.min(bar[2], Pc); if (from === pool) info.pool++; else { info.pair++; info.pairName = info.pairName || from; } }
+      else { const fk = (ii < firstPool ? feedK : feedK2) || 1; Pc = (x / y) * fk; Ph = Pl = Pc; info.feed++; }
+      // USD: quote side from the USD feed (USDC = $1), base side = pool price × quote
+      let uA, uB;
+      if (pool.a === 'USDC' && pool.b !== 'USDC') { uA = 1; uB = 1 / Pc; } else { uB = sb ? y : 1; uA = Pc * uB; }
+      // this pool's own volume for the bar (USD)
+      let v = null;
+      const ob = own && own.map[k];
+      if (own && k >= own.k0 && k <= own.k1) { v = ob ? ob[4] * (ob[5] ? uB : uA) : 0; info.vPool++; }
+      else if (res === 'hourly' && ownDay) {
+        const dk = Math.floor(((k - 1) * 3600) / 86400), db = ownDay.map[dk];
+        if (dk >= ownDay.k0 && dk <= ownDay.k1) { v = db ? (db[4] * (db[5] ? uB : uA)) / 24 : 0; info.vPool++; }
+      }
+      if (v == null && avgDayVol != null) { v = avgDayVol * (src.step / 86400); info.vAvg++; }
+      if (v == null) info.vLive++;
+      t.push(k * src.step); P.push(Pc); H.push(Ph); L.push(Pl); ua.push(uA); ub.push(uB); vol.push(v);
+      ae.push(sAero ? sAero[k - src.start] : null);
+      hc.push(chainRow(pool, Math.floor(((res === 'hourly' ? k - 1 : k) * src.step) / 86400)));
     }
     const lu = liveUsd();
     const now = Math.floor(Date.now() / 1000);
-    if (lu && t.length && now > t[t.length - 1] + 60) { t.push(now); P.push(lu[0] / lu[1]); ua.push(lu[0]); ub.push(lu[1]); }
-    ser = { t, P, ua, ub, step: src.step };
+    if (lu && t.length && now > t[t.length - 1] + 60) { const Pn = lu[0] / lu[1]; t.push(now); P.push(Pn); H.push(Pn); L.push(Pn); ua.push(lu[0]); ub.push(lu[1]); vol.push(null); ae.push(aeroPx || ae[ae.length - 1]); hc.push(hc[hc.length - 1] || null); }
+    ser = { t, P, H, L, ua, ub, vol, aero: ae, hc, step: src.step, info };
   }
 
   // ---------- concentrated-liquidity math ----------
@@ -87,7 +229,7 @@
   function inRange(P, lo, hi) { return !(lo > 0) || !isFinite(hi) ? true : P >= lo && P <= hi; }
   function params() {
     const fee = chainSt && chainSt.fee != null ? chainSt.fee : pool.fee;
-    const vol = S.volMode === 'custom' ? (S.customVol || 0) : S.volMode === 'avg7' && avg7 ? avg7.avg : pool.vol || 0;
+    const vol = S.volMode === 'custom' ? (S.customVol || 0) : S.volMode === 'avg7' && avg7 ? avg7.avg : pool.vol || 0; // 'hist' uses each bar's real volume, this only fills gaps
     const decA = chainSt?.decA ?? 18, decB = chainSt?.decB ?? 18;
     const sg = chainSt?.sugar;
     const lu = liveUsd();
@@ -98,6 +240,8 @@
       dep: S.dep, fee: fee || 0, vol, feeShare: (S.feeShare / 100) * (1 - ufee), ufee, earn: S.earn, aeroApr: S.aeroApr / 100,
       aeroLive: S.aeroSrc === 'live' && !!sg, emUsdDay, Lstaked: sg ? sg.gaugeL : null, stakedUsd, gaugeAlive: sg ? sg.alive : null,
       cl: isCL(pool), Lpool: chainSt?.L ?? null, decA, decB, tvl: pool.liq || 0,
+      hist: S.volMode === 'hist', emAeroDay: sg && sg.alive ? sg.emPerSec * 86400 : 0, aeroPxNow: aeroPx,
+      reb: S.reb, rebDelay: S.rebDelay, slip: S.slip / 100, gas: S.gas,
     };
   }
   function shareFor(L, o) {
@@ -114,44 +258,91 @@
   }
   function livePriceOrLast() { return livePrice() || ser.P[ser.P.length - 1]; }
 
+  // share of the bar's time spent inside [lo, hi], following the usual OHLC path: open → nearer extreme → other extreme → close
+  function barInFrac(p0, h, l, c, lo, hi) {
+    if (!(lo > 0) || !isFinite(hi)) return 1;
+    const pts = h === l ? [p0, c] : (c >= p0 ? [p0, l, h, c] : [p0, h, l, c]);
+    let tot = 0, inn = 0;
+    for (let j = 1; j < pts.length; j++) {
+      const a = pts[j - 1], b = pts[j], d = Math.abs(b - a);
+      tot += d;
+      if (d === 0) continue;
+      const x = Math.max(Math.min(a, b), lo), y = Math.min(Math.max(a, b), hi);
+      if (y > x) inn += y - x;
+    }
+    return tot > 0 ? inn / tot : (c >= lo && c <= hi ? 1 : 0);
+  }
   function backtest(lo0, hi0, o, keepPath) {
     const n = ser.t.length;
     if (n < 3) return null;
-    const [lo, hi] = btRange(lo0, hi0);
+    let [lo, hi] = btRange(lo0, hi0);
+    const full = !(lo > 0) || !isFinite(hi);
     const P0 = ser.P[0];
     const [x1, y1] = amounts(1, P0, lo, hi);
-    const L = o.dep / (x1 * ser.ua[0] + y1 * ser.ub[0]);
+    let L = o.dep / (x1 * ser.ua[0] + y1 * ser.ub[0]);
     const x0 = x1 * L, y0 = y1 * L;
-    const share = shareFor(L, o), ashare = aeroShare(L, o);
-    let fees = 0, rew = 0, exits = 0, tIn = 0, tTot = 0, outRun = 0, longestOut = 0;
+    // range shape kept when re-centering: multiples of the centre price
+    const c0 = !full && P0 >= lo && P0 <= hi ? P0 : Math.sqrt(lo * hi);
+    const wLo = full ? 0 : lo / c0, wHi = full ? Infinity : hi / c0;
+    const dec = Math.pow(10, (o.decA + o.decB) / 2);
+    const shareAt = (Lx, hc, V, i) => {
+      // o.self: checking a real position, whose liquidity is already inside the pool's recorded totals while in range
+      if (o.cl) { let Lp = o.hist && hc && hc[2] > 0 ? hc[2] : o.Lpool; if (Lp > 0) { const Lr = Lx * dec; if (o.self && Lp > Lr) Lp -= Lr; /* if smaller than yours, it was out of range at that snapshot */ return Lr / (Lp + Lr); } }
+      const tvl = o.hist && hc && hc[5] != null ? hc[5] * ser.ua[i] + hc[6] * ser.ub[i] : o.tvl;
+      return V / (tvl + V);
+    };
+    const aShareAt = (Lx, hc, V, i) => {
+      if (o.cl) { let gl = o.hist && hc ? hc[1] : o.Lstaked; if (!(gl >= 0)) return 0; const Lr = Lx * dec; if (o.self && gl > Lr) gl -= Lr; return Lr / (gl + Lr); }
+      const st = o.hist && hc && hc[3] != null ? hc[3] * ser.ua[i] + hc[4] * ser.ub[i] : o.stakedUsd;
+      return st != null ? V / (st + V) : 0;
+    };
+    let fees = 0, rew = 0, exits = 0, tIn = 0, tTot = 0, outRun = 0, longestOut = 0, reb = 0, rebCost = 0;
     let prevIn = inRange(P0, lo, hi), prevV = o.dep;
     const path = keepPath ? { t: [], v: [], h: [], f: [] } : null;
-    let V = o.dep, H = o.dep;
+    let V = o.dep, Hd = o.dep;
     for (let i = 0; i < n; i++) {
       const P = ser.P[i];
-      const [x, y] = amounts(L, P, lo, hi);
+      let [x, y] = amounts(L, P, lo, hi);
       V = x * ser.ua[i] + y * ser.ub[i];
-      H = x0 * ser.ua[i] + y0 * ser.ub[i];
+      Hd = x0 * ser.ua[i] + y0 * ser.ub[i];
       const inR = inRange(P, lo, hi);
       if (i > 0) {
         const dt = (ser.t[i] - ser.t[i - 1]) / 86400;
-        tTot += dt;
-        if (prevIn) {
-          tIn += dt;
-          if (o.earn === 'fees') fees += o.vol * o.fee * o.feeShare * share * dt;
-          else if (o.aeroLive) rew += o.emUsdDay * ashare * dt;
-          else rew += (prevV * o.aeroApr * dt) / 365;
+        const f = full ? 1 : barInFrac(ser.P[i - 1], ser.H[i], ser.L[i], P, lo, hi);
+        const hc = ser.hc[i];
+        tTot += dt; tIn += f * dt;
+        if (f > 0) {
+          if (o.earn === 'fees') {
+            const v = o.hist && ser.vol[i] != null ? ser.vol[i] : o.vol * dt;
+            fees += v * o.fee * o.feeShare * shareAt(L, hc, prevV, i) * f;
+          } else if (o.aeroLive) {
+            const emA = o.hist && hc ? hc[0] : o.emAeroDay;
+            const px = o.hist && ser.aero[i] ? ser.aero[i] : o.aeroPxNow;
+            rew += (emA || 0) * (px || 0) * aShareAt(L, hc, prevV, i) * f * dt;
+          } else rew += (prevV * o.aeroApr * dt * f) / 365;
+        }
+        if (prevIn && (f < 1 || !inR)) exits++;
+        if (!inR) { outRun += dt; longestOut = Math.max(longestOut, outRun); } else outRun = 0;
+        // re-center the range when price leaves it (swap to the new mix, pay pool fee + slippage + gas)
+        if (!full && o.reb !== 'off' && !inR && outRun * 24 >= (o.reb === 'delay' ? o.rebDelay : 0) - 1e-9) {
+          lo = P * wLo; hi = P * wHi;
+          const [nx1, ny1] = amounts(1, P, lo, hi);
+          const Lnew0 = V / (nx1 * ser.ua[i] + ny1 * ser.ub[i]);
+          const swapUsd = Math.abs(nx1 * Lnew0 - x) * ser.ua[i];
+          const cost = swapUsd * (o.fee + o.slip) + o.gas;
+          V -= cost; rebCost += cost; reb++;
+          L = V / (nx1 * ser.ua[i] + ny1 * ser.ub[i]);
           outRun = 0;
-        } else { outRun += dt; longestOut = Math.max(longestOut, outRun); }
-        if (prevIn && !inR) exits++;
+        }
       }
-      prevIn = inR; prevV = V;
-      if (path) { path.t.push(ser.t[i]); path.v.push(V); path.h.push(H); path.f.push(fees + rew); }
+      prevIn = inRange(P, lo, hi); prevV = V;
+      if (path) { path.t.push(ser.t[i]); path.v.push(V); path.h.push(Hd); path.f.push(fees + rew); }
     }
+    const share = shareAt(L, ser.hc[n - 1], V, n - 1), ashare = aShareAt(L, ser.hc[n - 1], V, n - 1);
     const earned = fees + rew;
     return {
-      lo, hi, share, L, x0, y0, timeIn: tTot ? tIn / tTot : 0, exits, longestOut, fees, rew, earned,
-      Vend: V, Hend: H, il: V - H, ilPct: H ? (V - H) / H : 0, net: V + earned - H, netPct: H ? (V + earned - H) / H : 0,
+      lo, hi, share, ashare, L, x0, y0, timeIn: tTot ? tIn / tTot : 0, exits, longestOut, fees, rew, earned, reb, rebCost,
+      Vend: V, Hend: Hd, il: V - Hd, ilPct: Hd ? (V - Hd) / Hd : 0, net: V + earned - Hd, netPct: Hd ? (V + earned - Hd) / Hd : 0,
       pnl: V + earned - o.dep, pnlPct: (V + earned - o.dep) / o.dep, apr: tTot ? (earned / o.dep) * (365 / tTot) : 0, days: tTot, path,
     };
   }
@@ -347,7 +538,7 @@
     el.onclick = (e) => { const b = e.target.closest('button'); if (b) onPick(b.dataset.id); };
   }
   function renderSegs() {
-    seg($('#simPeriods'), Object.keys(PERIODS).map((k) => [k, k]), S.period, (id) => { S.period = id; renderSegs(); buildSeries(); setChartData(); compute(); });
+    seg($('#simPeriods'), Object.keys(PERIODS).map((k) => [k, k]), S.period, (id) => { S.period = id; renderSegs(); buildSeries(); setChartData(); compute(); refreshHistory(); });
     seg($('#simMode'), [['fixed', 'My exact prices'], ['relative', 'Same % width from start']], S.mode, (id) => { S.mode = id; renderSegs(); compute(); });
     seg($('#simEarn'), [['fees', 'Trading fees'], ['aero', 'AERO rewards']], S.earn, (id) => { S.earn = id; renderSegs(); compute(); });
     const cnt = (c) => modePools().filter((p) => p.venue !== 'legacy' && (c === 'all' || chainOf(p) === c)).length;
@@ -356,11 +547,14 @@
       if (pool && id !== 'all' && chainOf(pool) !== id) { const a = defaultPool(); if (a) selectPool(a); }
     });
     const v7 = avg7 ? `7-day avg ${usdK(avg7.avg)}` : '7-day avg';
-    seg($('#simVolMode'), [['live', `Live 24h ${pool ? usdK(pool.vol) : ''}`], ['avg7', v7], ['custom', 'Custom']], S.volMode, (id) => {
+    seg($('#simVolMode'), [['hist', 'Real pool history'], ['live', `Live 24h ${pool ? usdK(pool.vol) : ''}`], ['avg7', v7], ['custom', 'Custom']], S.volMode, (id) => {
       S.volMode = id;
       if (id === 'custom' && S.customVol == null) S.customVol = pool?.vol || 0;
       renderSegs(); compute();
     });
+    seg($('#simReb'), [['off', 'Never'], ['exit', 'When price exits'], ['delay', 'After hours out']], S.reb, (id) => { S.reb = id; renderSegs(); compute(); });
+    $('#simRebOpts').hidden = S.reb === 'off';
+    $('#simRebDelayWrap').hidden = S.reb !== 'delay';
     seg($('#simAeroSrc'), [['live', 'Live from Aero'], ['manual', 'Enter my own']], S.aeroSrc, (id) => { S.aeroSrc = id; renderSegs(); compute(); });
     $('#simAeroSrcWrap').hidden = S.earn !== 'aero';
     $('#simAeroWrap').hidden = S.earn !== 'aero' || S.aeroSrc !== 'manual';
@@ -475,11 +669,105 @@
       k('Impermanent loss', usd(r.il, 2), spct(r.ilPct, 2) + ' vs holding', r.il < -0.5 ? 'bad' : '') +
       k('Net vs holding', usd(r.net, 2), spct(r.netPct, 2) + ' (fees − IL)', cls(r.net)) +
       k('Total P&L in USD', usd(r.pnl, 2), spct(r.pnlPct, 2) + ` · end value ${usd(r.Vend + r.earned, 0)}`, cls(r.pnl)) +
-      k('Start split', `${amt(r.x0)} ${pool.a} + ${amt(r.y0)} ${pool.b}`, S.mode === 'relative' ? `range ${fmtP(disp(S.inv ? r.hi : r.lo))}–${fmtP(disp(S.inv ? r.lo : r.hi))} at start` : 'at the start price');
+      k('Start split', `${amt(r.x0)} ${pool.a} + ${amt(r.y0)} ${pool.b}`, S.mode === 'relative' ? `range ${fmtP(disp(S.inv ? r.hi : r.lo))}–${fmtP(disp(S.inv ? r.lo : r.hi))} at start` : 'at the start price') +
+      (S.reb === 'off' || !isCL(pool) || S.full ? '' : k('Re-centers', String(r.reb), `cost ${usd(r.rebCost, 2)} (fee + slippage + gas) · now ${fmtP(disp(S.inv ? r.hi : r.lo))}–${fmtP(disp(S.inv ? r.lo : r.hi))}`, r.reb ? 'warn' : ''));
+    renderHistNote();
     renderValueChart(r);
     renderOptimizer(o);
     renderCompare();
+    renderPos();
     writeHash();
+  }
+
+
+  // ---------- check against a real position ----------
+  // Reads the position NFT on-chain (Live.positionCheck), then runs the same backtest over the same window,
+  // with the position's exact ticks and starting tokens, so actual vs simulated is like-for-like.
+  const pos = { pool: null, id: null, r: null, err: null, busy: false, msg: '' };
+  function simWindow(t0, t1, earn, lo, hi, a0, b0) {
+    const n = ser.t.length;
+    let i0 = 0; for (let i = 0; i < n; i++) { if (ser.t[i] <= t0) i0 = i; else break; }
+    let i1 = n - 1; for (let i = i0; i < n; i++) if (ser.t[i] >= t1) { i1 = i; break; }
+    if (i1 - i0 < 2) return null;
+    const sl = (arr) => arr.slice(i0, i1 + 1);
+    const full = ser;
+    ser = { ...full, t: sl(full.t), P: sl(full.P), H: sl(full.H), L: sl(full.L), ua: sl(full.ua), ub: sl(full.ub), vol: sl(full.vol), aero: sl(full.aero), hc: sl(full.hc) };
+    const mode0 = S.mode; S.mode = 'fixed';
+    try {
+      const dep = a0 * ser.ua[0] + b0 * ser.ub[0];
+      if (!(dep > 0)) return null;
+      const o = { ...params(), dep, earn, reb: 'off', hist: S.volMode === 'hist', self: true };
+      if (earn === 'aero') o.aeroLive = !!chainSt?.sugar;
+      const r = backtest(lo, hi, o, false);
+      return r && { ...r, dep, from: ser.t[0], to: ser.t[ser.t.length - 1] };
+    } finally { ser = full; S.mode = mode0; }
+  }
+  function renderPos() {
+    const out = $('#posOut'), stEl = $('#posStatus');
+    if (!out) return;
+    if (pos.pool !== pool) { out.innerHTML = ''; return; }
+    if (pos.busy) { stEl.textContent = pos.msg || 'Reading the position on-chain…'; out.innerHTML = ''; return; }
+    if (pos.err) { stEl.innerHTML = `<span class="pos-warn">${pos.err}</span>`; out.innerHTML = ''; return; }
+    const r = pos.r;
+    if (!r || !ser) return;
+    const aIs0 = pool.baseAddr && pool.baseAddr.toLowerCase() === r.t0;
+    const p10 = (tk) => Math.pow(1.0001, tk) * Math.pow(10, r.d0 - r.d1);
+    const lo = aIs0 ? p10(r.tl) : 1 / p10(r.tu), hi = aIs0 ? p10(r.tu) : 1 / p10(r.tl);
+    const a0 = aIs0 ? r.start0 : r.start1, b0 = aIs0 ? r.start1 : r.start0;
+    const fa = aIs0 ? r.fees0 : r.fees1, fb = aIs0 ? r.fees1 : r.fees0;
+    const lu = liveUsd() || [ser.ua[ser.ua.length - 1], ser.ub[ser.ub.length - 1]];
+    const now = Math.floor(Date.now() / 1000);
+    const end = r.closeTs || now;
+    const feeEnd = r.staked ? Math.max(r.windowTs, r.stakeTs) : end;
+    const stakeFrom = r.staked ? Math.max(r.windowTs, r.stakeTs) : null;
+    const realFees = fa * lu[0] + fb * lu[1];
+    const realAero = r.aero != null ? r.aero * (aeroPx || 0) : null;
+    const simF = feeEnd - r.windowTs > 2 * ser.step ? simWindow(r.windowTs, feeEnd, 'fees', lo, hi, a0, b0) : null;
+    let simA = null;
+    if (r.staked && now - stakeFrom > 2 * ser.step) {
+      // starting tokens at the stake time: same liquidity, priced at that bar
+      let j = 0; for (let i = 0; i < ser.t.length; i++) { if (ser.t[i] <= stakeFrom) j = i; else break; }
+      const Lh = r.Lmint / Math.pow(10, (r.d0 + r.d1) / 2); // position liquidity in whole-token units
+      const [xs, ys] = amounts(Lh, ser.P[j], lo, hi);
+      simA = simWindow(stakeFrom, now, 'aero', lo, hi, xs, ys);
+    }
+    const dt = (t) => new Date(t * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    const days = (a, b) => { const d = (b - a) / 86400; return d < 2 ? Math.round(d * 24) + 'h' : d.toFixed(1) + 'd'; };
+    const diff = (real, sim) => (real > 0 && sim != null ? spct(sim / real - 1, 0) : '—');
+    const rows = [];
+    if (simF || realFees > 0 || !r.staked) rows.push(`<tr><td>Trading fees${r.staked ? ' (before staking)' : ''}<div class="muted small">${dt(r.windowTs)} → ${r.staked ? dt(feeEnd) : r.closeTs ? dt(end) + ' (closed)' : 'now'} · ${days(r.windowTs, feeEnd)}</div></td><td class="num">${usd(realFees, 2)}<div class="muted small">${amt(fa)} ${pool.a} + ${amt(fb)} ${pool.b}</div></td><td class="num">${simF ? usd(simF.fees, 2) : '—'}<div class="muted small">${simF ? pct(simF.timeIn, 0) + ' in range' : 'too short to simulate'}</div></td><td class="num">${simF ? diff(realFees, simF.fees) : '—'}</td></tr>`);
+    if (r.staked) rows.push(`<tr><td>AERO rewards (staked)<div class="muted small">${dt(stakeFrom)} → now · ${days(stakeFrom, now)}</div></td><td class="num">${realAero != null ? usd(realAero, 2) : '—'}<div class="muted small">${r.aero != null ? amt(r.aero) + ' AERO at today\u2019s price' : ''}</div></td><td class="num">${simA ? usd(simA.rew, 2) : '—'}<div class="muted small">${simA ? pct(simA.timeIn, 0) + ' in range' : 'too short to simulate'}</div></td><td class="num">${simA ? diff(realAero, simA.rew) : '—'}</td></tr>`);
+    const notes = [];
+    if (r.windowTs > r.mintTs + 3600) notes.push(`minted ${dt(r.mintTs)}; compared over the last year only`);
+    if (r.changed) notes.push('<span class="pos-warn">liquidity was added or removed after minting, so the real numbers assume today\u2019s liquidity for the whole time</span>');
+    if (!isUni(pool) && !r.staked && !r.closed) notes.push('if this position was staked for part of its life, fees during that time went to voters and are over-counted here');
+    if (simF && simF.from > r.windowTs + ser.step * 1.5) notes.push('the simulator\u2019s history starts after the mint, so the window is shorter on the simulated side');
+    const p5 = (x) => (x >= 1000 ? fmtP(x) : (+x).toPrecision(5));
+    const stTxt = `Position #${pos.id} · ${p5(disp(S.inv ? hi : lo))}–${p5(disp(S.inv ? lo : hi))} ${S.inv ? pool.a : pool.b} per ${S.inv ? pool.b : pool.a} · minted ${dt(r.mintTs)} with ${amt(a0)} ${pool.a} + ${amt(b0)} ${pool.b}${r.staked ? ' · staked in the gauge' : r.closed ? ' · closed' : ' · not staked'}`;
+    stEl.textContent = stTxt;
+    out.innerHTML = `<div class="table-wrap" style="max-height:none"><table class="pos-tbl"><thead><tr><th>Earned</th><th class="num">Actual (on-chain)</th><th class="num">Simulator</th><th class="num">Sim vs actual</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>
+      <p class="muted small">Actual = the pool's own fee and reward counters for this NFT (the same math the contract uses when you collect), valued at today's prices. Simulator = this page's backtest with the same ticks, start date and starting tokens, using the volume, liquidity and AERO settings above.${notes.length ? ' Note: ' + notes.join('; ') + '.' : ''}</p>
+      <button class="btn" type="button" id="posUse">Load this range into the simulator</button>`;
+    $('#posUse').onclick = () => { S.full = false; S.lo = lo; S.hi = hi; S.mode = 'fixed'; if (simF) S.dep = Math.round(simF.dep); $('#simDep').value = S.dep; renderSegs(); updatePriceLines(); compute(); };
+  }
+  async function runPosCheck(id) {
+    if (!pool) return;
+    const p = pool;
+    Object.assign(pos, { pool: p, id, r: null, err: null, busy: true, msg: '' });
+    $('#posGo').disabled = true;
+    renderPos();
+    try {
+      const r = await Live.positionCheck(p, id, Math.floor(Date.now() / 1000) - 364 * 86400, (m) => { pos.msg = m; if (pos.pool === pool) $('#posStatus').textContent = m; });
+      if (p !== pool) return;
+      pos.r = r;
+      // make sure the backtest period covers the position's window
+      const age = (Date.now() / 1000 - r.windowTs) / 86400;
+      const need = age <= 6.9 ? '7D' : age <= 29.5 ? '30D' : age <= 89.5 ? '90D' : age <= 179 ? '180D' : '1Y';
+      const order = Object.keys(PERIODS);
+      if (order.indexOf(S.period) < order.indexOf(need)) { S.period = need; renderSegs(); buildSeries(); setChartData(); refreshHistory(); }
+    } catch (e) { pos.err = e.message || String(e); }
+    finally { pos.busy = false; $('#posGo').disabled = false; }
+    compute();
   }
 
   // ---------- compare venues: same pair on Aero and Uniswap, every chain ----------
@@ -509,7 +797,7 @@
       if (x !== sv.pool) {
         const flip = x.a !== sv.pool.a;
         pool = x; chainSt = cmpSt[pkey(x)]?.st || null; avg7 = null;
-        if (S.volMode === 'custom') S.volMode = 'live';
+        if (S.volMode === 'custom') S.volMode = 'hist';
         if (flip) { S.lo = sv.hi > 0 && isFinite(sv.hi) ? 1 / sv.hi : 0; S.hi = sv.lo > 0 ? 1 / sv.lo : Infinity; }
         buildSeries();
       }
@@ -538,14 +826,14 @@
       const x = r.x, cur = x === pool;
       const sym = isUni(x) && x.sa && x.sa !== x.a ? ` <span class="muted">${x.sa}/${x.sb}</span>` : '';
       return `<tr class="${cur ? 'cur' : ''}">
-        <td>${venueTag(x)} ${chainTag(x)}</td>
-        <td>${kindFmt(x)} · ${feeFmt(x.fee)}${sym}${r.cl ? '' : ' <span class="muted">full range</span>'}</td>
-        <td class="num">${usdK(x.liq)}</td>
-        <td class="num">${usdK(x.vol)}</td>
-        <td class="num">${r.err ? '—' : ap(r.nf, 'feeApr')}${r.thin ? '<br><span class="warn small" title="Your deposit would be most of the in-range liquidity, so this estimate is unrealistic">thin liquidity</span>' : ''}</td>
-        <td class="num">${x.venue === 'aero' && !r.err ? ap(r.na, 'aeroAprNow') : '<span class="muted">n/a</span>'}</td>
-        <td class="num">${r.bf ? `<span class="${cls(r.bf.net)}">${usd(r.bf.net, 0)}</span>${r.ba ? ` <span class="muted small">fees</span><br><span class="${cls(r.ba.net)}">${usd(r.ba.net, 0)}</span> <span class="muted small">AERO</span>` : ''}` : '—'}${r === best ? ' <span class="venue aero">Best</span>' : ''}</td>
-        <td>${cur ? '<span class="muted small">Viewing</span>' : `<button class="btn small" data-cmp="${x.addr}">Simulate</button>`}</td></tr>`;
+        <td class="c-venue">${venueTag(x)} ${chainTag(x)}</td>
+        <td class="c-pool">${kindFmt(x)} · ${feeFmt(x.fee)}${sym}${r.cl ? '' : ' <span class="muted">full range</span>'}</td>
+        <td class="num" data-l="TVL">${usdK(x.liq)}</td>
+        <td class="num" data-l="24h vol">${usdK(x.vol)}</td>
+        <td class="num" data-l="Fee APR">${r.err ? '—' : ap(r.nf, 'feeApr')}${r.thin ? '<br><span class="warn small" title="Your deposit would be most of the in-range liquidity, so this estimate is unrealistic">thin liquidity</span>' : ''}</td>
+        <td class="num" data-l="AERO APR">${x.venue === 'aero' && !r.err ? ap(r.na, 'aeroAprNow') : '<span class="muted">n/a</span>'}</td>
+        <td class="num" data-l="Net vs hold">${r.bf ? `<span class="${cls(r.bf.net)}">${usd(r.bf.net, 0)}</span>${r.ba ? ` <span class="muted small">fees</span><br><span class="${cls(r.ba.net)}">${usd(r.ba.net, 0)}</span> <span class="muted small">AERO</span>` : ''}` : '—'}${r === best ? ' <span class="venue aero">Best</span>' : ''}</td>
+        <td class="c-act">${cur ? '<span class="muted small">Viewing</span>' : `<button class="btn small" data-cmp="${x.addr}">Simulate</button>`}</td></tr>`;
     }).join('');
     $('#simCmpSub').textContent = `your ${S.full ? 'full' : 'price'} range, ${usd(S.dep)} deposit and ${S.period} backtest applied to each pool${rows.some((r) => !r.live && r.x !== pool) ? ' · loading live pool data…' : ''}`;
   }
@@ -576,6 +864,8 @@
     if (S.inv) q.set('inv', 1);
     if (S.mode !== 'fixed') q.set('m', S.mode);
     if (S.earn !== 'fees') q.set('e', S.earn);
+    if (S.reb !== 'off') { q.set('rb', S.reb); if (S.reb === 'delay') q.set('rh', S.rebDelay); }
+    if (S.volMode !== 'hist' && S.volMode !== 'custom') q.set('v', S.volMode);
     history.replaceState(null, '', tag + '?' + q.toString());
   }
 
@@ -585,6 +875,43 @@
     const [stt, ap] = await Promise.all([Live.poolState(p).catch(() => null), Live.aeroUsd().catch(() => null)]);
     if (ap) aeroPx = ap;
     if (stt && p === pool) { const first = !chainSt?.sugar && stt.sugar; chainSt = { ...stt, addr: p.addr }; renderLive(); pushLivePoint(); if (first) compute(); else renderNow(); }
+  }
+  let histSeq = 0;
+  async function refreshHistory() {
+    if (!pool) return;
+    const p = pool, my = ++histSeq;
+    S.histLoading = true; renderHistNote();
+    const done = () => { if (p !== pool || my !== histSeq) return; buildSeries(); setChartData(); compute(); };
+    const ch = Live.onchainHist().then((h) => { if (h && !chainHist) { chainHist = h; chainDayIdx = Object.fromEntries(h.days.map((d, i) => [d, i])); } });
+    // first pass: this pool's own history; second: the pair's other pools + compare-table volumes
+    let first = true;
+    try { await Promise.all([ch, loadHistory(p, 0, () => { if (first) { first = false; S.histLoading = false; } done(); })]); } catch (e) { /* fall back to feeds */ }
+    S.histLoading = false;
+    done();
+  }
+  function renderHistNote() {
+    const el = $('#simHistNote');
+    if (!el) return;
+    if (!ser || !ser.info) { el.textContent = ''; return; }
+    const i = ser.info, unit = ser.step === 3600 ? 'h' : 'd';
+    const tot = i.pool + i.pair + i.feed;
+    const parts = [];
+    if (i.pool) parts.push(`this pool's trades ${i.pool}${unit}`);
+    if (i.pair) parts.push(`same pair on ${i.pairName ? venueName(i.pairName) + (chainOf(i.pairName) !== chainOf(pool) ? ' ' + CHAINS[chainOf(i.pairName)] : '') : 'other pools'} ${i.pair}${unit}`);
+    if (i.feed) parts.push(`USD price feeds ${i.feed}${unit}`);
+    let v = '';
+    if (S.volMode === 'hist') {
+      const vp = [];
+      if (i.vPool) vp.push(`this pool's real volume ${i.vPool}${unit}`);
+      if (i.vAvg) vp.push(`its average day before it existed ${i.vAvg}${unit}`);
+      if (i.vLive) vp.push(`live 24h ${i.vLive}${unit}`);
+      v = ' · Volume: ' + vp.join(', ');
+      const hc = chainHist && chainHist.p[pool.addr.toLowerCase()];
+      if (hc) v += ` · Liquidity & AERO: on-chain daily since ${new Date(chainHist.days[hc.findIndex((x) => x)] * 86400e3).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+      else if (pool.venue === 'aero' && chainOf(pool) === 'base') v += ' · Liquidity & AERO: today\'s values';
+      else v += ' · Liquidity: today\'s value';
+    }
+    el.textContent = (S.histLoading ? 'Loading this pool\'s trade history… ' : '') + (tot ? 'Price: ' + parts.join(', ') : '') + v;
   }
   async function selectPool(addr, keep) {
     const p = D.pools.find((x) => x.addr.toLowerCase() === String(addr).toLowerCase());
@@ -602,6 +929,7 @@
     if (!keep && isCL(p)) applyWidth(0.1);
     compute();
     loadCompare();
+    refreshHistory();
     Live.avgVolume7d(p.addr, chainOf(p)).then((v) => { if (p === pool) { avg7 = v; renderSegs(); if (S.volMode === 'avg7') compute(); } });
   }
 
@@ -615,6 +943,7 @@
     $('#simSearch').oninput = poolOptions;
     $('#simLegacy').onchange = poolOptions;
     $('#simPool').onchange = (e) => selectPool(e.target.value);
+    $('#posForm').onsubmit = (e) => { e.preventDefault(); const v = $('#posId').value.trim().replace(/^#/, ''); if (/^\d+$/.test(v)) runPosCheck(+v); else { pos.pool = pool; pos.err = 'Enter the numeric NFT token ID.'; renderPos(); } };
     $('#simDep').oninput = (e) => { const v = +e.target.value; if (v > 0) { S.dep = v; compute(); } };
     const parseNum = (v) => +String(v).replace(/[, ]/g, '');
     const onRange = () => { const dl = parseNum($('#simMin').value), dh = parseNum($('#simMax').value); if (dl > 0 && dh > dl) { setDispRange(dl, dh); compute(); } };
@@ -632,6 +961,9 @@
     $('#simFlip').onclick = () => { S.inv = !S.inv; setChartData(); compute(); renderLive(); };
     $('#simAero').oninput = (e) => { S.aeroApr = +e.target.value || 0; compute(); };
     $('#simCustomVol').oninput = (e) => { S.customVol = +e.target.value || 0; compute(); };
+    $('#simRebDelay').oninput = (e) => { const v = +e.target.value; if (v > 0) { S.rebDelay = v; compute(); } };
+    $('#simSlip').oninput = (e) => { const v = +e.target.value; if (v >= 0) { S.slip = v; compute(); } };
+    $('#simGas').oninput = (e) => { const v = +e.target.value; if (v >= 0) { S.gas = v; compute(); } };
     $('#simFeeShare').oninput = (e) => { const v = +e.target.value; if (v >= 0 && v <= 100) { S.feeShare = v; compute(); } };
     $('#simCmp tbody').onclick = (e) => { const b = e.target.closest('button[data-cmp]'); if (b) window.SimOpen(b.dataset.cmp); };
     $('#simOpt tbody').onclick = (e) => { const tr = e.target.closest('tr[data-w]'); if (!tr) return; applyWidth(tr.dataset.w === 'full' ? 'full' : +tr.dataset.w); compute(); };
@@ -645,6 +977,9 @@
     if (q.get('inv')) S.inv = true;
     if (q.get('m') === 'relative') S.mode = 'relative';
     if (q.get('e') === 'aero') S.earn = 'aero';
+    if (['exit', 'delay'].includes(q.get('rb'))) S.reb = q.get('rb');
+    if (+q.get('rh') > 0) { S.rebDelay = +q.get('rh'); $('#simRebDelay').value = S.rebDelay; }
+    if (['live', 'avg7'].includes(q.get('v'))) S.volMode = q.get('v');
     $('#simDep').value = S.dep;
     $('#simFeeShare').value = S.feeShare;
     applyModeUI();

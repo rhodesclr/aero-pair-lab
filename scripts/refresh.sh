@@ -27,3 +27,5 @@ if n<60 or p<300 or len(stale)>5:
     import shutil; shutil.copy('../data.prev.json','../data.json'); sys.exit(1)
 PY
 rm -f ../data.prev.json
+# daily on-chain pool history for the simulator (AERO emissions, staked/active liquidity); never fails the refresh
+python3 -u hist.py || echo 'hist step failed - keeping previous hist.json'

@@ -421,6 +421,16 @@
   function renderAll() { renderControls(); legend(); renderMatrix(); renderDetail(); renderRank(); }
   const gen = new Date(D.generated * 1000);
   $('#asofTxt').textContent = `${D.assets.filter((a) => a.type === 'stock').length} stock tokens · ${D.assets.filter((a) => a.type !== 'stock').length} crypto · history ${gen.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
+  // stale-data warning: the hourly refresh should keep this under ~1h
+  const showStale = () => {
+    const h = (Date.now() / 1000 - D.generated) / 3600;
+    let el = document.getElementById('staleBanner');
+    if (h < 3) { if (el) el.remove(); return; }
+    if (!el) { el = document.createElement('div'); el.id = 'staleBanner'; el.className = 'stale-banner'; el.setAttribute('role', 'status'); document.querySelector('.tabs').before(el); }
+    const age = h < 48 ? Math.round(h) + ' hours' : Math.round(h / 24) + ' days';
+    el.innerHTML = `<b>Heads up: pool list, fees and price history are ${age} old.</b> The hourly refresh looks stuck, so backtests and APRs may be off. Live prices, TVL and on-chain pool data still update.`;
+  };
+  showStale(); setInterval(showStale, 10 * 60e3);
   document.addEventListener('click', (e) => {
     const b = e.target.closest('[data-sim]');
     if (b && window.SimOpen) { e.preventDefault(); window.SimOpen(b.dataset.sim); }

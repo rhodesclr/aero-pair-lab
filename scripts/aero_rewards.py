@@ -90,11 +90,11 @@ def _decode_lps(r):
     return out
 
 SEL_ALL = '0x814b0f0c'
-def sugar_all(page=25, chain='base'):
-    cnt = call(SUGARS[chain], '0x06661abd', chain)  # count()
+def sugar_all(page=25, chain='base', block='latest'):
+    cnt = call(SUGARS[chain], '0x06661abd', chain, block)  # count()
     n = int(cnt, 16) if cnt and cnt != 'ERR' else 0
     res = []
     for off in range(0, n, page):
-        r = call(SUGARS[chain], SEL_ALL + hex(page)[2:].rjust(64, '0') + hex(off)[2:].rjust(64, '0') + hex(86400)[2:].rjust(64, '0') + '0'.rjust(64, '0'), chain)
+        r = call(SUGARS[chain], SEL_ALL + hex(page)[2:].rjust(64, '0') + hex(off)[2:].rjust(64, '0') + hex(86400)[2:].rjust(64, '0') + '0'.rjust(64, '0'), chain, block)
         if r and r != 'ERR': res += _decode_lps(r)
     return res

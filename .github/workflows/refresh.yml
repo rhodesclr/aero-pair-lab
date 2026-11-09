@@ -9,6 +9,7 @@ permissions:
   contents: write
   pages: write
   id-token: write
+  issues: write
 concurrency:
   group: refresh
   cancel-in-progress: false
@@ -16,6 +17,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    outputs:
+      refresh: ${{ steps.refresh.outcome }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,20 +35,23 @@ jobs:
           if [ "$(date -u +%H)" != "00" ]; then echo "Not the daily slot"; exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
-          git add data.json
+          git add data.json hist.json
           if git diff --cached --quiet; then echo "No changes"; exit 0; fi
           git commit -m "Daily data refresh $(date -u +%Y-%m-%d)"
           git pull --rebase && git push
       - name: Assemble site
         run: |
           mkdir -p _site
-          cp index.html app.js sim.js live.js styles.css manifest.webmanifest sw.js data.json .nojekyll _site/
+          cp index.html app.js sim.js live.js styles.css manifest.webmanifest sw.js data.json hist.json .nojekyll _site/
           cp -r icons _site/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
   deploy:
     needs: build
+    # A failed refresh would otherwise replace the last good hourly data with the older committed copy,
+    # so scheduled runs only deploy fresh data. Code pushes always deploy.
+    if: needs.build.outputs.refresh == 'success' || github.event_name != 'schedule'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -53,3 +59,35 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+  # Opens a GitHub issue (GitHub emails you) and marks the run failed when the live site's data is over 3 hours old.
+  # Closes the issue again once a refresh succeeds.
+  alert:
+    needs: [build, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TITLE: "Hourly data refresh is failing"
+    steps:
+      - name: Check data age
+        run: |
+          gen=$(curl -fsSL "https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/data.json?t=$(date +%s)" | python3 -c "import json,sys; print(int(json.load(sys.stdin)['generated']))" || echo 0)
+          age=$(( ($(date +%s) - gen) / 3600 ))
+          echo "Live data age: ${age}h (refresh step: ${{ needs.build.outputs.refresh }})"
+          open=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number -q '.[0].number' || true)
+          if [ "${{ needs.build.outputs.refresh }}" = "success" ] && [ "$age" -lt 3 ]; then
+            if [ -n "$open" ]; then gh issue close "$open" --comment "Refresh is working again ($(date -u '+%Y-%m-%d %H:%M UTC'))."; fi
+            exit 0
+          fi
+          if [ "$age" -ge 3 ]; then
+            msg="The live site's data is ${age} hours old. Latest run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            if [ -n "$open" ]; then
+              # one reminder every 12 hours, not every hour
+              if [ $(( age % 12 )) -eq 0 ]; then gh issue comment "$open" --body "$msg"; fi
+            else
+              gh issue create --title "$TITLE" --body "$msg"
+            fi
+            echo "::error::Site data is ${age}h old"
+            exit 1
+          fi
