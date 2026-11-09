@@ -36,6 +36,7 @@ for s in STOCKS:
 # crypto (Coinbase Exchange candles)
 CM.pop('BRETT',None); CM.pop('wstETH',None)
 CBP={'cbETH':'CBETH-USD','EURC':'EURC-USDC'}
+CGONLY={'tBTC':'BTC'}  # sym -> fallback sym (must come earlier in the list)
 def candles(prod,gran,n):
     end=int(time.time())//gran*gran; outc={}
     while n>0:
@@ -50,10 +51,21 @@ def candles(prod,gran,n):
 for s,(n,a,cg) in CM.items():
     if cg is None:
         assets.append(dict(sym=s,name=n,type='stable',icon=None,addr=a)); continue
-    prod=CBP.get(s,s+'-USD')
-    d=candles(prod,86400,366); h=candles(prod,3600,24*92)
-    daily[s]={t//DAY:r6(v) for t,v in d.items()}
-    hourly[s]={(t+3600)//3600:r6(v) for t,v in h.items()}
+    if s in CGONLY:
+        # not listed on Coinbase Exchange: CoinGecko (1y daily + 90d hourly); falls back to BTC if CoinGecko fails
+        try:
+            d=cget(f"https://api.coingecko.com/api/v3/coins/{cg}/market_chart?vs_currency=usd&days=365")['prices']; time.sleep(2)
+            h=cget(f"https://api.coingecko.com/api/v3/coins/{cg}/market_chart?vs_currency=usd&days=90")['prices']; time.sleep(2)
+            daily[s]={int(t//1000)//DAY:r6(v) for t,v in d}
+            hourly[s]={round(t/1000/3600):r6(v) for t,v in h}
+        except Exception as e:
+            print('coingecko failed',s,e,'- using',CGONLY[s],'prices')
+            daily[s]=dict(daily[CGONLY[s]]); hourly[s]=dict(hourly[CGONLY[s]])
+    else:
+        prod=CBP.get(s,s+'-USD')
+        d=candles(prod,86400,366); h=candles(prod,3600,24*92)
+        daily[s]={t//DAY:r6(v) for t,v in d.items()}
+        hourly[s]={(t+3600)//3600:r6(v) for t,v in h.items()}
     assets.append(dict(sym=s,name=n,type='crypto',icon=None,addr=a,cg=cg))
     print(s,len(daily[s]),len(hourly[s]))
 # pools
