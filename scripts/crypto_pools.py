@@ -6,7 +6,7 @@ def get(u):
 C={ # sym: (name, base address, coingecko id)
 'ETH':('Ethereum (WETH)','0x4200000000000000000000000000000000000006','ethereum'),
 'BTC':('Bitcoin (cbBTC)','0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf','bitcoin'),
-'AERO':('Aerodrome','0x940181a94A35A4569E4529A3CDfB74e38FD98631','aerodrome-finance'),
+'AERO':('Aero','0x940181a94A35A4569E4529A3CDfB74e38FD98631','aerodrome-finance'),
 'VIRTUAL':('Virtuals Protocol','0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b','virtual-protocol'),
 'XRP':('XRP (cbXRP)','0xcb585250f852C6c6bf90434AB21A00f02833a4af','ripple'),
 'DOGE':('Dogecoin (cbDOGE)','0xcbD06E5A2B0C65597161de254AA074E489dEb510','dogecoin'),
@@ -30,6 +30,7 @@ C={ # sym: (name, base address, coingecko id)
 'tBTC':('Threshold tBTC','0x236aa50979D5f3De3Bd1Eeb40E81137F22ab794b','tbtc'),
 'HYPE':('Hyperliquid (cbHYPE)','0xB200000000000000000000451d033a5000cb479e','hyperliquid'),
 'DIEM':('Diem (Venice compute)','0xf4d97f2da56e8c3098f3a8d538db630a2606a024','diem'),
+'AEROSTRAT':('Aerostrategy','0x1A85b97F8b0E1CEE4D5500E093F5970a2aeB3fB8','aerostrategy'),
 'USDC':('USD Coin','0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',None),
 }
 out={}

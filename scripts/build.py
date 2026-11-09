@@ -37,6 +37,32 @@ for s in STOCKS:
 CM.pop('BRETT',None); CM.pop('wstETH',None)
 CBP={'cbETH':'CBETH-USD','EURC':'EURC-USDC'}
 CGONLY={'tBTC':'BTC'}  # sym -> fallback sym (must come earlier in the list)
+# not on Coinbase Exchange and too new on CoinGecko: USD price from its main pool's trades on GeckoTerminal
+GTONLY={'AEROSTRAT':'0x95180496aDAbC8380fca36EC81BAE131CA97cD3b'}  # AEROSTRAT/AERO (Aerodrome), the deepest pool
+def gt_ohlcv(pool,res,days):
+    # USD closes for the pool's base token, paged backwards; bars only exist when it traded, so gaps are filled forward
+    step=86400 if res=='day' else 3600; stop=int(time.time())-days*86400; rows={}; before=None
+    for _ in range(6):
+        u=f"https://api.geckoterminal.com/api/v2/networks/base/pools/{pool}/ohlcv/{res}?aggregate=1&limit=1000&currency=usd&token=base"+(f"&before_timestamp={before}" if before else '')
+        l=None
+        for t in range(3):
+            try: l=json.load(urllib.request.urlopen(urllib.request.Request(u,headers={'User-Agent':'Mozilla/5.0','Accept':'application/json'}),timeout=30))['data']['attributes']['ohlcv_list']; break
+            except Exception as e:
+                if '401' in str(e): break  # free API only reaches back ~6 months
+                print('gt retry',res,e); time.sleep(5*(t+1))
+        if l is None:
+            if rows: break
+            raise RuntimeError('geckoterminal failed')
+        for r in l: rows[int(r[0])]=r[4]
+        if not l or min(r[0] for r in l)<=stop: break
+        before=min(r[0] for r in l); time.sleep(2.5)
+    ks=sorted(k for k in rows if k>=stop)
+    if not ks: return {}
+    out={}; last=None; k=ks[0]; end=int(time.time())//step*step
+    while k<=end:
+        if k in rows: last=rows[k]
+        out[k]=last; k+=step
+    return out
 def candles(prod,gran,n):
     end=int(time.time())//gran*gran; outc={}
     while n>0:
@@ -51,7 +77,14 @@ def candles(prod,gran,n):
 for s,(n,a,cg) in CM.items():
     if cg is None:
         assets.append(dict(sym=s,name=n,type='stable',icon=None,addr=a)); continue
-    if s in CGONLY:
+    if s in GTONLY:
+        try:
+            d=gt_ohlcv(GTONLY[s],'day',366); h=gt_ohlcv(GTONLY[s],'hour',92)
+            daily[s]={t//DAY:r6(v) for t,v in d.items() if v}
+            hourly[s]={(t+3600)//3600:r6(v) for t,v in h.items() if v}
+        except Exception as e:
+            print('geckoterminal failed',s,e,'- skipping'); continue
+    elif s in CGONLY:
         # not listed on Coinbase Exchange: CoinGecko (1y daily + 90d hourly); falls back to BTC if CoinGecko fails
         try:
             d=cget(f"https://api.coingecko.com/api/v3/coins/{cg}/market_chart?vs_currency=usd&days=365")['prices']; time.sleep(2)

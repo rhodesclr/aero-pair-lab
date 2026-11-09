@@ -40,7 +40,7 @@
     'Stocks × crypto': ['BTC', 'ETH', 'AERO', 'USDC', 'MSTRc', 'BMNRc', 'NVDAc', 'GOOGLc', 'AAPLc', 'METAc', 'AMZNc', 'TSLAc', 'SPCXc'],
     'Mag 7': ['AAPLc', 'MSFTc', 'GOOGLc', 'AMZNc', 'METAc', 'NVDAc', 'TSLAc', 'ETH', 'BTC'],
     'Top Aero stocks': ['NVDAc', 'GOOGLc', 'MSTRc', 'SNDKc', 'MUc', 'SPCXc', 'AAPLc', 'METAc', 'AMZNc', 'SKHYc', 'PLTRc', 'TSLAc'],
-    'Base crypto': ['ETH', 'BTC', 'tBTC', 'cbETH', 'AERO', 'VIRTUAL', 'SOL', 'XRP', 'TAO', 'HYPE', 'MORPHO', 'WELL', 'VVV', 'DIEM', 'ZORA', 'EURC', 'USDC'],
+    'Base crypto': ['ETH', 'BTC', 'tBTC', 'cbETH', 'AERO', 'AEROSTRAT', 'VIRTUAL', 'SOL', 'XRP', 'TAO', 'HYPE', 'MORPHO', 'WELL', 'VVV', 'DIEM', 'ZORA', 'EURC', 'USDC'],
     'Chips & AI': ['NVDAc', 'AVGOc', 'AMDc', 'MRVLc', 'CBRSc', 'MUc', 'SNDKc', 'SKHYc', 'ARMc', 'PLTRc', 'CRWVc', 'GOOGLc', 'TAO', 'VIRTUAL', 'VVV', 'DIEM'],
   };
   const st = {
