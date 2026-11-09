@@ -1,3 +1,4 @@
+from ds import dsget
 # On-chain details for the Uniswap pools in uni_pools.json:
 #  - finds extra v3 pools through each chain's v3 factory (the market-data index misses some, e.g. most Optimism v3 pools)
 #  - fee tier, protocol fee cut, tick spacing, in-range liquidity, token order and decimals
@@ -115,7 +116,7 @@ STOCKSET = STOCKS
 for chain, addrs in found.items():
     addrs = sorted(addrs)
     for i in range(0, len(addrs), 30):
-        d = get(f'https://api.dexscreener.com/latest/dex/pairs/{chain}/' + ','.join(addrs[i:i + 30]))
+        d = dsget(f'https://api.dexscreener.com/latest/dex/pairs/{chain}/' + ','.join(addrs[i:i + 30]))
         for p in d.get('pairs') or []:
             ta, tb = p['baseToken']['address'].lower(), p['quoteToken']['address'].lower()
             a, b = TOK[chain].get(ta), TOK[chain].get(tb)
@@ -135,7 +136,7 @@ for chain, addrs in found.items():
 for chain in TOK:
     ps = [p for p in pools if p['chain'] == chain and 'pn' not in p]
     for i in range(0, len(ps), 30):
-        d = get(f'https://api.dexscreener.com/latest/dex/pairs/{chain}/' + ','.join(p['addr'] for p in ps[i:i + 30]))
+        d = dsget(f'https://api.dexscreener.com/latest/dex/pairs/{chain}/' + ','.join(p['addr'] for p in ps[i:i + 30]))
         m = {x['pairAddress'].lower(): x for x in d.get('pairs') or []}
         for p in ps[i:i + 30]:
             x = m.get(p['addr'].lower())

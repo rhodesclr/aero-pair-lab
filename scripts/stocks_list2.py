@@ -1,3 +1,4 @@
+from ds import dsget
 import json,urllib.request,time,concurrent.futures as cf
 def get(u):
     r=urllib.request.Request(u,headers={'User-Agent':'Mozilla/5.0'})
@@ -5,7 +6,7 @@ def get(u):
 toks=json.load(open('cb_stocks.json'))
 def f(t):
     for k in range(3):
-        try: return t, get("https://api.dexscreener.com/token-pairs/v1/base/"+t['contract_address'])
+        try: return t, dsget("https://api.dexscreener.com/token-pairs/v1/base/"+t['contract_address'])
         except Exception as e: time.sleep(2)
     return t,[]
 res={}

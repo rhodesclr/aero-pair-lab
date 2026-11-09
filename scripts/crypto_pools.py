@@ -1,3 +1,4 @@
+from ds import dsget
 import json,urllib.request,time
 def get(u):
     r=urllib.request.Request(u,headers={'User-Agent':'Mozilla/5.0'})
@@ -33,7 +34,7 @@ C={ # sym: (name, base address, coingecko id)
 }
 out={}
 for s,(n,a,cg) in C.items():
-    d=get("https://api.dexscreener.com/token-pairs/v1/base/"+a)
+    d=dsget("https://api.dexscreener.com/token-pairs/v1/base/"+a)
     ps=[p for p in d if p.get('dexId') in ('aerodrome','aero')]
     syms=set()
     for p in ps:
@@ -48,7 +49,7 @@ EXTRA={'AERO':['0x3f5bF3EdAc59d650D8fDf9657a71F2f904A3a4Ee'],'SOL':['0x311935Cd8
 for s,addrs in EXTRA.items():
     for ad in addrs:
         try:
-            d=get("https://api.dexscreener.com/token-pairs/v1/base/"+ad)
+            d=dsget("https://api.dexscreener.com/token-pairs/v1/base/"+ad)
             extra=[p for p in d if p.get('dexId') in ('aerodrome','aero')]
             seen={p['pairAddress'] for p in out[s]}
             out[s]+= [p for p in extra if p['pairAddress'] not in seen]

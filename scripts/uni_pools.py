@@ -1,3 +1,4 @@
+from ds import dsget
 # Uniswap (v2/v3/v4) pools on Base, Optimism and Robinhood Chain whose two tokens are both coins in the app.
 # Robinhood Chain stock tokens map to the same stock as the Coinbase token (AAPL -> AAPLc); USDG counts as the dollar side.
 import json, re, time, urllib.request, concurrent.futures as cf
@@ -37,7 +38,7 @@ TOK['robinhood'].update({
 def find_rh(s):
     y = s[:-1]
     for q in (y + ' USDG', y + ' WETH'):
-        try: d = get('https://api.dexscreener.com/latest/dex/search?q=' + urllib.parse.quote(q))
+        try: d = dsget('https://api.dexscreener.com/latest/dex/search?q=' + urllib.parse.quote(q))
         except Exception: continue
         for p in d.get('pairs') or []:
             if p.get('chainId') != 'robinhood': continue
@@ -55,7 +56,7 @@ pools = {}
 def pairs(item):
     chain, addr = item
     if addr == ZERO: return chain, []
-    try: return chain, get(f'https://api.dexscreener.com/token-pairs/v1/{chain}/{addr}')
+    try: return chain, dsget(f'https://api.dexscreener.com/token-pairs/v1/{chain}/{addr}')
     except Exception: return chain, []
 items = [(c, a) for c in TOK for a in TOK[c]]
 STOCK = set(STOCKS)
