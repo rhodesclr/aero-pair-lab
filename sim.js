@@ -984,7 +984,7 @@
     $('#simFeeShare').value = S.feeShare;
     applyModeUI();
     const hp = q.get('pool') && D.pools.find((p) => p.addr.toLowerCase() === q.get('pool').toLowerCase());
-    if (hp && !inMode(hp)) q.delete('pool');
+    if (q.get('pool') && (!hp || !inMode(hp))) q.delete('pool'); // unknown or other-simulator pool: start on the default one
     const start = q.get('pool') || defaultPool();
     const lo = +q.get('lo'), hi = +q.get('hi');
     if (q.get('pool') && (q.get('full') || (lo > 0 && hi > lo))) {
