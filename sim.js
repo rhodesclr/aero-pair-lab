@@ -95,7 +95,7 @@
     const want = (x, r, n, pr) => {
       const key = hkey(x, r);
       if (histStore[key] !== undefined) { if (histStore[key] && histStore[key].then) jobs.push(histStore[key]); return; }
-      const job = Live.poolHistory(x.addr, chainOf(x), r, n, pr).then((gt) => { histStore[key] = orientHist(x, gt, r) || false; }).catch(() => { histStore[key] = false; });
+      const job = Live.poolHistory(x.addr, chainOf(x), r, n, pr).then((gt) => { histStore[key] = orientHist(x, gt, r) || false; }).catch(() => { histStore[key] = false; setTimeout(() => { if (histStore[key] === false) delete histStore[key]; }, 5 * 60e3); }); // failed: allow a fresh try in 5 min
       histStore[key] = job; jobs.push(job);
     };
     const got = (x, r) => { const h = histStore[hkey(x, r)]; return h && !h.then ? h : null; };

@@ -32,13 +32,20 @@ jobs:
       - name: Daily commit of data
         if: steps.refresh.outcome == 'success' && github.event_name == 'schedule'
         run: |
-          if [ "$(date -u +%H)" != "00" ]; then echo "Not the daily slot"; exit 0; fi
+          # Commit when the saved copy's data is 20+ hours old. (The old "is it 00:xx UTC?" check ran after the ~8-minute
+          # rebuild, when it was already 01:xx, so it never committed.) The commit also counts as repo activity,
+          # which keeps GitHub from pausing this schedule after 60 quiet days.
+          last=$(git show HEAD:data.json | python3 -c "import json,sys; print(int(json.load(sys.stdin)['generated']))" || echo 0)
+          age=$(( ($(date +%s) - ${last:-0}) / 3600 ))
+          if [ "$age" -lt 20 ]; then echo "Saved data is ${age}h old - next daily commit later"; exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
           git add data.json hist.json
           if git diff --cached --quiet; then echo "No changes"; exit 0; fi
           git commit -m "Daily data refresh $(date -u +%Y-%m-%d)"
           git pull --rebase && git push
+      - name: Check site files
+        run: python3 scripts/check.py
       - name: Assemble site
         run: |
           mkdir -p _site

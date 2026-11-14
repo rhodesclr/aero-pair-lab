@@ -196,7 +196,12 @@
       for (let k = 0; k < 3; k++) {
         gtNext = Date.now() + 2200;
         try { out = await getJSON(job.url, {}, 20000); err = null; break; }
-        catch (e) { err = e; if (!/429/.test(String(e))) break; await new Promise((r) => setTimeout(r, 15000 * (k + 1))); }
+        catch (e) {
+          // GeckoTerminal's rate-limit replies (429) often arrive without CORS headers, so the browser reports them as a
+          // plain network failure; both get a paused retry (15 s, then 30 s), anything else (e.g. 404) gives up at once
+          err = e; if (!/429|Failed to fetch|NetworkError|Load failed/i.test(String(e))) break;
+          if (k < 2) await new Promise((r) => setTimeout(r, 15000 * (k + 1)));
+        }
       }
       if (err) job.rej(err); else job.res(out);
     }
@@ -404,7 +409,9 @@
   Live.start = (data) => {
     D = data;
     refreshPools();
-    setInterval(refreshPools, 60e3);
+    // every minute while the page is on screen; a hidden tab skips it and catches up as soon as it's visible again
+    setInterval(() => { if (!document.hidden) refreshPools(); }, 60e3);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - Live.lastUpdate > 60e3) refreshPools(); });
     setInterval(() => emit('tick'), 5e3);
   };
   Live.refreshPools = refreshPools;
